@@ -8,7 +8,7 @@ import { createClient } from '@supabase/supabase-js';
  * @param {any} [customClient] 
  * @returns {Promise<{ assignedCount: number, totalCount: number, logs: string[] }>}
  */
-export async function runAutoAssignment(meetingId, customClient) {
+export async function runAutoAssignment(meetingId, customClient = null) {
   const supabase = customClient || createClient(
     process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '',
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''

@@ -817,37 +817,33 @@ export default function TerritoriesPage() {
   };
 
   return (
-    <div className={`flex h-screen bg-slate-50 dark:bg-gray-900 dark:text-gray-100 pb-[52px] md:pb-0
-      ${splitView ? 'flex-row text-sm' : 'flex-col'} ${isPhone ? 'text-[15px]' : 'text-sm'}`}>
+    <div className="flex flex-col md:flex-row h-screen h-[100dvh] bg-slate-50 dark:bg-gray-900 dark:text-gray-100 text-sm pb-[52px] md:pb-0 overflow-hidden">
       <IconSidebar />
       <SyncStatus />
 
-      {/* Panel izquierdo: lista + edición.
-          Desktop → columna fija junto al mapa.
-          Tableta/celular → ocupa la pantalla y se alterna con el mapa. */}
-      <div className={`flex-shrink-0 border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col
-        ${splitView
-          ? 'w-80 xl:w-96 border-r'
-          : `w-full flex-1 min-h-0 ${pane === 'list' || drawing || drawingBoundary ? 'flex' : 'hidden'}`}`}>
-        {/* Header — only map/boundary actions, no overflow */}
-        <div className="px-3 py-2.5 border-b border-slate-200 dark:border-gray-700 flex items-center gap-2">
-          <h1 className="font-bold text-slate-800 dark:text-gray-100 flex items-center gap-1.5 mr-auto"><MapPin size={16} className="text-sky-600" /> Territorios</h1>
-          {!drawing && !drawingBoundary && (
-            <button onClick={startDraw} className="flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium px-2 py-1.5 rounded-lg">
-              <Plus size={13} /> Nuevo
-            </button>
-          )}
-          {!drawing && !drawingBoundary && (
-            <button onClick={startBoundary} title="Definir límite"
-              className="flex items-center gap-1 bg-slate-500 hover:bg-slate-600 text-white text-xs font-medium px-2 py-1.5 rounded-lg">
-              <SquareDashed size={13} /> Límite
-            </button>
-          )}
-          {!drawing && !drawingBoundary && boundary && (
-            <button onClick={clearBoundary} title="Eliminar límite" className="text-slate-400 hover:text-red-500 px-1">
-              <X size={13} />
-            </button>
-          )}
+      {/* Panel izquierdo: lista + edición */}
+      <div className="w-full md:w-80 h-auto md:h-full max-h-[45vh] md:max-h-none flex-shrink-0 border-b md:border-b-0 md:border-r border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col min-h-0">
+        <div className="px-4 py-3 border-b border-slate-200 dark:border-gray-700 flex items-center justify-between gap-2">
+          <h1 className="font-bold text-slate-800 dark:text-gray-100 flex items-center gap-2"><MapPin size={18} className="text-sky-600" /> Territorios</h1>
+          <div className="flex gap-1.5">
+            {!drawing && !drawingBoundary && (
+              <button onClick={startDraw} className="flex items-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium px-2.5 py-1.5 rounded-lg">
+                <Plus size={14} /> Nuevo
+              </button>
+            )}
+            {!drawing && !drawingBoundary && (
+              <button onClick={startBoundary} title="Definir límite de la congregación"
+                className="flex items-center gap-1 bg-slate-500 hover:bg-slate-600 text-white text-xs font-medium px-2.5 py-1.5 rounded-lg">
+                <SquareDashed size={14} /> Límite
+              </button>
+            )}
+            {!drawing && !drawingBoundary && boundary && (
+              <button onClick={clearBoundary} title="Eliminar límite" className="text-slate-400 hover:text-red-500 px-1">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
         </div>
 
         {migrationPending && (
@@ -1086,10 +1082,7 @@ export default function TerritoriesPage() {
       </div>
 
       {/* Mapa */}
-      <div
-        className={`flex-1 relative ${splitView || pane === 'map' || drawing || drawingBoundary ? 'block' : 'hidden'}`}
-        onClick={() => exportOpen && setExportOpen(false)}
-      >
+      <div className={`flex-1 relative ${splitView || pane === 'map' || drawing || drawingBoundary ? 'block' : 'hidden'} w-full h-full min-h-0 min-w-0`}>
         <TerritoryMap
           territories={visible}
           selectedId={selectedId}

@@ -24,7 +24,10 @@ function loadLeaflet(): Promise<any> {
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
     script.async = true;
     script.onload = () => resolve((window as any).L);
-    script.onerror = () => reject(new Error('No se pudo cargar Leaflet'));
+    script.onerror = () => {
+      leafletPromise = null;
+      reject(new Error('No se pudo cargar Leaflet'));
+    };
     document.body.appendChild(script);
   });
   return leafletPromise;
@@ -94,9 +97,13 @@ export default function TerritoryMap({
   // Montaje: crear mapa.
   useEffect(() => {
     let cancelled = false;
+    let resizeObserver: ResizeObserver | null = null;
+
     loadLeaflet().then((L) => {
       if (cancelled || !containerRef.current || mapRef.current) return;
-      const map = L.map(containerRef.current).setView(center || DEFAULT_CENTER, 14);
+      const map = L.map(containerRef.current, {
+        tap: false, // Evita que Leaflet bloquee eventos táctiles/clicks en iPadOS
+      }).setView(center || DEFAULT_CENTER, 14);
       const tiles = darkRef.current ? TILES.dark : TILES.light;
       tileLayerRef.current = L.tileLayer(tiles.url, {
         attribution: tiles.attribution,
@@ -110,14 +117,28 @@ export default function TerritoryMap({
       });
       mapRef.current = map;
       readyRef.current = true;
-      // Forzar redibujo inicial.
-      setTimeout(() => map.invalidateSize(), 100);
+
+      // Observador de redimensionamiento para rotación de iPad y reacomodo de pantalla
+      if (containerRef.current && typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(() => {
+          if (mapRef.current) {
+            mapRef.current.invalidateSize();
+          }
+        });
+        resizeObserver.observe(containerRef.current);
+      }
+
+      // Forzar redibujo inicial
+      setTimeout(() => {
+        if (mapRef.current) mapRef.current.invalidateSize();
+      }, 150);
       drawBoundary();
       drawSaved();
       drawDraft();
     });
     return () => {
       cancelled = true;
+      if (resizeObserver) resizeObserver.disconnect();
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; readyRef.current = false; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,5 +236,5 @@ export default function TerritoryMap({
     if (containerRef.current) containerRef.current.style.cursor = drawing ? 'crosshair' : '';
   }, [drawing]);
 
-  return <div ref={containerRef} className="w-full h-full" style={{ minHeight: 400, background: isDark ? '#1a2228' : '#e8eef0' }} />;
+  return <div ref={containerRef} className="w-full h-full min-h-[300px]" style={{ background: isDark ? '#1a2228' : '#e8eef0' }} />;
 }
