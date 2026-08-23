@@ -3,6 +3,8 @@ import { sb } from '@/lib/crud';
 import { ALL_TABLES, primaryKeyOf } from '@/lib/backupSections';
 import { parseCsv } from '@/lib/csv';
 import { getSessionContext, unauthenticated } from '@/lib/serverContext';
+import { setForeignKeys, foreignKeyCheck } from '@/lib/db';
+import { getDb } from '@/lib/sqlite';
 
 const CHUNK_SIZE = 500;
 
@@ -84,15 +86,41 @@ export async function POST(request: Request) {
 
     if (name.endsWith('.json')) {
       const dump = JSON.parse(text) as Record<string, Record<string, unknown>[]>;
-      for (const table of Object.keys(dump)) {
-        if (!ALL_TABLES.includes(table)) continue;
-        results.push(await writeTable(table, dump[table], mode, congreId));
+      // Orden canónico padre→hijo (ALL_TABLES), no el orden interno del JSON.
+      // FK desactivadas durante toda la operación: dumps legacy pueden traer
+      // hijos sin padres (p. ej. users sin congregations). Al final se
+      // reactivan y se verifica integridad con foreign_key_check.
+      setForeignKeys(false);
+      try {
+        for (const table of ALL_TABLES) {
+          const rows = dump[table];
+          if (!Array.isArray(rows)) continue;
+          results.push(await writeTable(table, rows, mode, congreId));
+        }
+      } finally {
+        setForeignKeys(true);
+      }
+      if (!dump['congregations']) {
+        getDb().prepare(`
+          INSERT OR IGNORE INTO congregations (id, name)
+          SELECT DISTINCT congregation_id, '(restaurada)'
+          FROM users WHERE congregation_id IS NOT NULL
+        `).run();
+      }
+      const violations = foreignKeyCheck();
+      if (violations.length > 0) {
+        return NextResponse.json({ success: true, results, warning: `${violations.length} fila(s) con referencia rota (foreign_key_check)` });
       }
     } else if (name.endsWith('.csv')) {
       if (!targetTable) return NextResponse.json({ error: 'Selecciona a qué tabla corresponde el CSV' }, { status: 400 });
       const rawRows = parseCsv(text);
       const rows = rawRows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, coerce(v)])));
-      results.push(await writeTable(targetTable, rows, mode, congreId));
+      setForeignKeys(false);
+      try {
+        results.push(await writeTable(targetTable, rows, mode, congreId));
+      } finally {
+        setForeignKeys(true);
+      }
     } else {
       return NextResponse.json({ error: 'Formato no soportado — sube un .json o .csv' }, { status: 400 });
     }

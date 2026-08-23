@@ -318,3 +318,24 @@ export function dbClient() {
     from(table: string) { return new QueryBuilder(table); },
   };
 }
+
+/**
+ * Control de FK para operaciones masivas (restore de respaldos).
+ *
+ * El restore inserta tablas en bloques y el orden padre→hijo no siempre es
+ * posible (p. ej. dumps que no incluyen `congregations` pero sí `users`).
+ * Desactivar FK durante toda la operación evita fallos intermedios que dejan
+ * la base destruida a medias; `foreignKeyCheck()` reporta al final cualquier
+ * inconsistencia real que haya quedado.
+ */
+export function setForeignKeys(on: boolean): void {
+  getDb().pragma(`foreign_keys = ${on ? 'ON' : 'OFF'}`);
+}
+
+/** Filas que violan FK con las FK activadas ([] = consistente). */
+export function foreignKeyCheck(): { table: string; rowid: number; parent: string; fkid: number }[] {
+  try {
+    return getDb().prepare('PRAGMA foreign_key_check').all() as
+      { table: string; rowid: number; parent: string; fkid: number }[];
+  } catch { return []; }
+}

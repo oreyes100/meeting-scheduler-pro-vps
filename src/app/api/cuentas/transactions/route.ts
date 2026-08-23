@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { getDb } from '@/lib/sqlite';
+import { toCsv } from '@/lib/csv';
 import { ACCOUNTS, TYPES, type Account, type TxType } from '@/lib/cuentas';
 import { requireCuentas, badRequest, serverError } from '../_guard';
 
@@ -65,6 +66,7 @@ export async function GET(request: Request) {
     const account = searchParams.get('account');
     const type = searchParams.get('type');
     const code = searchParams.get('code');
+    const fmt = searchParams.get('format');
 
     const where: string[] = ['congregation_id = ?'];
     const params: unknown[] = [g.congreId];
@@ -82,8 +84,19 @@ export async function GET(request: Request) {
       FROM cuentas_transactions
       WHERE ${where.join(' AND ')}
       ORDER BY date ASC, created_at ASC
-      LIMIT 2000
+      LIMIT ${fmt === 'csv' ? 200000 : 2000}
     `).all(...params);
+
+    if (fmt === 'csv') {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const csv = toCsv(rows as unknown as Record<string, unknown>[]);
+      return new NextResponse(csv, {
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="cuentas-transacciones-${stamp}.csv"`,
+        },
+      });
+    }
 
     return NextResponse.json({ transactions: rows });
   } catch (e) { return serverError(e); }

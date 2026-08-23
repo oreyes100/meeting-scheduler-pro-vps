@@ -36,6 +36,8 @@ export async function GET(request: Request) {
     const sections = sectionsParam ? sectionsParam.split(',').filter(Boolean) : null;
     const tables = tablesForSections(sections);
     const stamp = new Date().toISOString().slice(0, 10);
+    // Nombre del archivo incluye la seccion cuando se exporta una sola
+    const tag = sections && sections.length === 1 ? `-${sections[0]}` : '';
 
     const dump: Record<string, unknown[]> = {};
     for (const table of tables) dump[table] = await fetchAllRows(table, congreId);
@@ -44,7 +46,7 @@ export async function GET(request: Request) {
       return new NextResponse(JSON.stringify(dump, null, 2), {
         headers: {
           'Content-Type': 'application/json',
-          'Content-Disposition': `attachment; filename="respaldo-${stamp}.json"`,
+          'Content-Disposition': `attachment; filename="respaldo${tag}-${stamp}.json"`,
         },
       });
     }
@@ -74,7 +76,7 @@ export async function GET(request: Request) {
     return new NextResponse(zipBuffer, {
       headers: {
         'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="respaldo-${stamp}.zip"`,
+        'Content-Disposition': `attachment; filename="respaldo${tag}-${stamp}.zip"`,
       },
     });
   } catch (e: unknown) {

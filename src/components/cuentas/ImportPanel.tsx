@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Upload, AlertCircle, Check, FileSpreadsheet } from 'lucide-react';
+import { Upload, AlertCircle, Check, FileSpreadsheet, Download } from 'lucide-react';
 import { parseCsv, autoMap, FIELD_LABELS, type Field } from '@/lib/csvImport';
 import { money, monthLabel } from './types';
 
@@ -92,7 +92,13 @@ export function ImportPanel({ api, onImported, flash, setError }: {
   return (
     <div className="space-y-4 max-w-4xl">
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-        <h2 className="font-semibold text-sm mb-1">Importar respaldo CSV</h2>
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <h2 className="font-semibold text-sm">Importar respaldo CSV</h2>
+          <a href="/api/cuentas/transactions?format=csv"
+             className="flex items-center gap-1.5 px-3 py-1 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium shrink-0">
+            <Download size={12} /> Exportar respaldo CSV
+          </a>
+        </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
           Sube el CSV exportado del programa anterior. Se detectan las columnas automáticamente
           y puedes corregir el mapeo. Nada se guarda hasta que confirmes la verificación previa.
