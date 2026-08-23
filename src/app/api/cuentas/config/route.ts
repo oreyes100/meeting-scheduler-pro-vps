@@ -21,7 +21,7 @@ export async function GET() {
 
     const cfg = db.prepare(
       `SELECT label, city, state, remit_code, res_pub_code, res_pub_amount,
-              res_pct_code, res_pct_percent, res_pct_source
+              res_pct_code, res_pct_percent, res_pct_source, ai_api_key
        FROM cuentas_config WHERE congregation_id = ?`
     ).get(g.congreId) as Record<string, unknown> | undefined;
 
@@ -36,6 +36,9 @@ export async function GET() {
         res_pct_code:    (cfg?.res_pct_code as string)    ?? DEFAULT_CIERRE.res_pct_code,
         res_pct_percent: Number(cfg?.res_pct_percent ?? DEFAULT_CIERRE.res_pct_percent),
         res_pct_source:  (cfg?.res_pct_source as string)  ?? DEFAULT_CIERRE.res_pct_source,
+        // Clave de IA para el agente de recibos: nunca se devuelve al cliente.
+        has_ai_api_key: Boolean(cfg?.ai_api_key),
+        has_global_ai_key: Boolean(process.env.GEMINI_API_KEY),
       },
     });
   } catch (e) { return serverError(e); }
@@ -59,13 +62,14 @@ export async function PUT(request: Request) {
     getDb().prepare(`
       INSERT INTO cuentas_config
         (congregation_id, label, city, state, remit_code, res_pub_code, res_pub_amount,
-         res_pct_code, res_pct_percent, res_pct_source, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))
+         res_pct_code, res_pct_percent, res_pct_source, ai_api_key, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
       ON CONFLICT(congregation_id) DO UPDATE SET
         label = excluded.label, city = excluded.city, state = excluded.state,
         remit_code = excluded.remit_code, res_pub_code = excluded.res_pub_code,
         res_pub_amount = excluded.res_pub_amount, res_pct_code = excluded.res_pct_code,
         res_pct_percent = excluded.res_pct_percent, res_pct_source = excluded.res_pct_source,
+        ai_api_key = COALESCE(excluded.ai_api_key, cuentas_config.ai_api_key),
         updated_at = datetime('now')
     `).run(
       g.congreId,
@@ -78,6 +82,9 @@ export async function PUT(request: Request) {
       code(b.res_pct_code,   DEFAULT_CIERRE.res_pct_code),
       pct,
       code(b.res_pct_source, DEFAULT_CIERRE.res_pct_source),
+      // Clave de IA: solo se sobreescribe si el PUT trae una no vacía.
+      b.ai_api_key != null && String(b.ai_api_key).trim()
+        ? String(b.ai_api_key).trim() : null,
     );
 
     return NextResponse.json({ success: true });

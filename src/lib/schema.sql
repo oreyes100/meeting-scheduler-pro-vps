@@ -645,3 +645,27 @@ CREATE TABLE IF NOT EXISTS cuentas_config (
   res_pct_source   text    NOT NULL DEFAULT 'C',    -- código base del porcentaje
   updated_at       text DEFAULT (datetime('now'))
 );
+
+-- ─── 37. CUENTAS — RECIBOS POR TELEGRAM (propuestas del agente) ──────────────
+-- El agente propone asientos leídos con IA; SOLO la aprobación humana
+-- (callback ✅) escribe en cuentas_transactions. UNIQUE(chat_id, message_id)
+-- hace idempotente el webhook: si Telegram reintenta la entrega, el update ya
+-- conocido se ignora en vez de duplicar la propuesta.
+CREATE TABLE IF NOT EXISTS cuentas_telegram_pending (
+  id              text PRIMARY KEY,
+  chat_id         text NOT NULL,
+  message_id      text NOT NULL,
+  congregation_id text REFERENCES congregations(id),
+  file_type       text,                -- photo | document
+  mime_type       text,
+  status          text NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','approved','rejected','error')),
+  proposal        text,                -- JSON: { items[], confidence, model }
+  error_message   text,
+  resolved_at     text,
+  created_at      text DEFAULT (datetime('now')),
+  updated_at      text DEFAULT (datetime('now')),
+  UNIQUE(chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctp_congre ON cuentas_telegram_pending(congregation_id, status);

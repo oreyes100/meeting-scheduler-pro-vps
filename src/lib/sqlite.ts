@@ -252,6 +252,9 @@ export function getDb(): Database.Database {
     `ALTER TABLE cuentas_config ADD COLUMN res_pct_code text NOT NULL DEFAULT 'RM'`,
     `ALTER TABLE cuentas_config ADD COLUMN res_pct_percent real NOT NULL DEFAULT 10`,
     `ALTER TABLE cuentas_config ADD COLUMN res_pct_source text NOT NULL DEFAULT 'C'`,
+    // Clave de IA por congregación para la lectura de recibos (agente Telegram).
+    // Tiene prioridad sobre GEMINI_API_KEY global del servidor.
+    `ALTER TABLE cuentas_config ADD COLUMN ai_api_key text`,
   ];
   for (const sql of runMigrations) {
     try { _db.exec(sql); } catch { /* column already exists */ }
