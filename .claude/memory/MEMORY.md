@@ -1,5 +1,13 @@
-# Memory Index — Meeting Scheduler Pro
+# Memoria - meeting-scheduler-pro-vps
 
-- [Contexto Activo](Contexto%20Activo.md) — estado sesión a sesión: completado, pendiente, próximos pasos
-- [Decision Journal](Decision%20Journal.md) — decisiones arquitectónicas cerradas; no re-debatir sin solicitud explícita
-- [sessions.jsonl](sessions.jsonl) — historial de sesiones con score
+## Capa 1: Contexto Inmediato
+- Sesión actual: Contexto Activo.md (tags <private>)
+- Input reciente: última exchange
+
+## Capa 2: Historia Reciente
+- sessions.jsonl: scores, decisiones por sesión
+- Última sesión: score 8/10
+
+## Capa 3: Memoria Semántica
+- Supabase: tables meetings, persons, territories
+- Búsqueda vectorial en progreso
