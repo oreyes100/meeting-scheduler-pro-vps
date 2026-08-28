@@ -61,6 +61,8 @@ export interface CierreConfig {
   res_pct_code: string;
   res_pct_percent: number;
   res_pct_source: string;
+  maintenance_code: string;
+  maintenance_amount: number;
 }
 
 export const DEFAULT_CIERRE: CierreConfig = {
@@ -70,6 +72,8 @@ export const DEFAULT_CIERRE: CierreConfig = {
   res_pct_code: 'RM',
   res_pct_percent: 10,
   res_pct_source: 'C',
+  maintenance_code: 'GM',
+  maintenance_amount: 0,
 };
 
 export interface Transaction {
@@ -137,7 +141,7 @@ export function prevYm(ym: string): string {
 export const cierreTag = (ym: string) => `CIERRE-${ym}`;
 
 export interface CierreEntry {
-  kind: 'remit' | 'res_pub' | 'res_pct';
+  kind: 'remit' | 'res_pub' | 'res_pct' | 'maintenance';
   code: string;
   description: string;
   amount: number;

@@ -4,27 +4,30 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Banknote, Plus, Pencil, Trash2, X, Check, AlertCircle, Printer, Wallet,
   CalendarCheck, BookOpen, BarChart3, SearchCheck, Tags, FileText, Settings2, Upload,
+  ScanLine, Download, Sparkles,
 } from 'lucide-react';
 import { IconSidebar } from '@/components/IconSidebar';
 import { SyncStatus } from '@/components/SyncStatus';
 import { useTheme } from '@/lib/theme';
 import { ArqueoModal } from '@/components/cuentas/ArqueoModal';
 import { ImportPanel } from '@/components/cuentas/ImportPanel';
+import { OcrPanel } from '@/components/cuentas/OcrPanel';
 import {
-  S26Sheet, BalanceCards, S30Report, S25cReport, IncomeExpenseChart,
+  S26Sheet, BalanceCards, ActionTiles, S30Report, S25cReport, IncomeExpenseChart,
   ReconcilePanel, FormHeader,
-} from '@/components/cuentas/Reports';
+} from '@/components/cuentas/ReportsV2';
 import {
   ACCOUNTS, ACCOUNT_LABELS, TYPE_LABELS, QUARTERS, money,
   currentYm, serviceYearOf, serviceYearMonths, monthLabel, serviceYearOptions,
   MONTH_NAMES_ES, EMPTY_CONFIG,
   type Account, type TxType, type CtCode, type S26, type S30, type S25c,
   type Summary, type Reconcile, type CuentasConfig, type Transaction, type CierreEntry,
+  type S25cAnswers, type S25cAnswer, type S25cAnswerValue,
 } from '@/components/cuentas/types';
 
 /* ── Navegación ─────────────────────────────────────────────────────────────── */
 
-type View = 's26' | 's30' | 'forms' | 'chart' | 'reconcile' | 'codes' | 'import' | 'config';
+type View = 's26' | 's30' | 'forms' | 'chart' | 'reconcile' | 'codes' | 'ocr' | 'import' | 'config';
 
 const NAV: { key: View; label: string; sub: string; Icon: typeof BookOpen }[] = [
   { key: 's26',       label: 'Hoja de Cuentas',   sub: 'S-26-S',            Icon: BookOpen },
@@ -33,6 +36,7 @@ const NAV: { key: View; label: string; sub: string; Icon: typeof BookOpen }[] = 
   { key: 'chart',     label: 'Relación I/E',      sub: 'Año de servicio',    Icon: BarChart3 },
   { key: 'reconcile', label: 'Análisis Contables', sub: 'Verificación',      Icon: SearchCheck },
   { key: 'codes',     label: 'Códigos CT',        sub: 'Catálogo',           Icon: Tags },
+  { key: 'ocr',       label: 'Subir Recibo',      sub: 'Captura con IA',     Icon: ScanLine },
   { key: 'import',    label: 'Importar',          sub: 'Respaldo CSV',       Icon: Upload },
   { key: 'config',    label: 'Configuración',     sub: 'Encabezado y cierre', Icon: Settings2 },
 ];
@@ -66,6 +70,9 @@ export default function CuentasPage() {
   const [s26, setS26] = useState<S26 | null>(null);
   const [s30, setS30] = useState<S30 | null>(null);
   const [s25c, setS25c] = useState<S25c | null>(null);
+  const [s25cAnswers, setS25cAnswers] = useState<S25cAnswers>({});
+  const [auditorName, setAuditorName] = useState('');
+  const [secretarioName, setSecretarioName] = useState('');
   const [summary, setSummary] = useState<Summary | null>(null);
   const [rec, setRec] = useState<Reconcile | null>(null);
   const [codes, setCodes] = useState<CtCode[]>([]);
@@ -121,7 +128,16 @@ export default function CuentasPage() {
 
   const loadS25c = useCallback((y: string, q: number) =>
     api(`/api/cuentas/reports?kind=s25c&sy=${encodeURIComponent(y)}&quarter=${q}`)
-      .then(d => setS25c(d.s25c as S25c))
+      .then(d => {
+        const data = d.s25c as S25c;
+        setS25c(data);
+        // Pre-fill answers with auto-computed values; auditor can override
+        const init: S25cAnswers = {};
+        for (const [k, v] of Object.entries(data.autoAnswers ?? {})) {
+          if (v) init[k] = { answer: v as S25cAnswerValue, notes: '' };
+        }
+        setS25cAnswers(init);
+      })
       .catch(e => setError(e instanceof Error ? e.message : 'Error')), [api]);
 
   useEffect(() => { loadCodes(); loadConfig(); }, [loadCodes, loadConfig]);
@@ -328,6 +344,16 @@ export default function CuentasPage() {
           {/* ── Hoja S-26 ─────────────────────────────────────────────────── */}
           {view === 's26' && s26 && filteredS26 && (
             <>
+              <div className="print:hidden">
+                <ActionTiles actions={[
+                  { key: 'ocr',    title: 'Subir Recibo',        sub: 'Captura automática con IA', gradient: 'from-teal-500 to-cyan-600',    icon: <ScanLine size={15} />,      onClick: () => setView('ocr') },
+                  { key: 'anal',   title: 'Análisis Contables',  sub: 'Verificación del mes',      gradient: 'from-fuchsia-500 to-purple-600', icon: <SearchCheck size={15} />, onClick: () => setView('reconcile') },
+                  { key: 'forms',  title: 'Formularios Oficiales', sub: 'S-26 / S-30 / S-25c',     gradient: 'from-orange-500 to-red-600',   icon: <Printer size={15} />,       onClick: () => setView('forms') },
+                  { key: 'cierre', title: 'Cierre de Fin de Mes', sub: 'Genera los asientos',      gradient: 'from-emerald-500 to-green-700', icon: <CalendarCheck size={15} />, onClick: () => setModal('cierre') },
+                  { key: 'arqueo', title: 'Arqueo de Caja',      sub: 'Corte y conteo',            gradient: 'from-amber-500 to-yellow-600', icon: <Wallet size={15} />,        onClick: () => setModal('arqueo') },
+                ]} />
+              </div>
+
               <BalanceCards s26={s26} />
 
               <div className="flex flex-wrap items-center gap-2 print:hidden">
@@ -357,33 +383,12 @@ export default function CuentasPage() {
                 </button>
               </div>
 
-              <S26Sheet s26={filteredS26} />
-
-              {/* Acciones por fila, separadas del formulario oficial */}
-              {visibleRows.length > 0 && (
-                <div className="print:hidden">
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Editar o eliminar asientos</p>
-                  <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
-                    {visibleRows.map(r => (
-                      <div key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                        <span className="font-mono text-gray-400 w-20 shrink-0">{r.date}</span>
-                        <span className="w-10 shrink-0 font-medium">{r.code}</span>
-                        <span className="flex-1 truncate">{r.description}</span>
-                        <span className="tabular-nums shrink-0">{money(r.amount)}</span>
-                        {r.receipt_ref?.startsWith('CIERRE-') && (
-                          <span className="shrink-0 px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300">cierre</span>
-                        )}
-                        <button onClick={() => openEdit(r)} className="p-1 text-gray-400 hover:text-emerald-600 shrink-0">
-                          <Pencil size={12} />
-                        </button>
-                        <button onClick={() => deleteTx(r)} className="p-1 text-gray-400 hover:text-red-600 shrink-0">
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <S26Sheet
+                s26={filteredS26}
+                onEdit={openEdit}
+                onDelete={deleteTx}
+                onOpeningEdit={() => setModal('opening')}
+              />
             </>
           )}
 
@@ -415,15 +420,52 @@ export default function CuentasPage() {
                   </button>
                 ))}
                 {formTab === 's25c' && (
-                  <select value={quarter} onChange={e => setQuarter(Number(e.target.value))}
-                          className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-xs">
-                    {QUARTERS.map(q => <option key={q.n} value={q.n}>{q.label}</option>)}
-                  </select>
+                  <>
+                    <select value={quarter} onChange={e => setQuarter(Number(e.target.value))}
+                            className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-xs">
+                      {QUARTERS.map(q => <option key={q.n} value={q.n}>{q.label}</option>)}
+                    </select>
+                    <input value={auditorName} onChange={e => setAuditorName(e.target.value)}
+                           placeholder="Auditor" title="Auditoría realizada por"
+                           className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-xs w-36" />
+                    <input value={secretarioName} onChange={e => setSecretarioName(e.target.value)}
+                           placeholder="Secretario" title="Revisada por (Secretario)"
+                           className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-xs w-36" />
+                  </>
                 )}
-                <button onClick={() => window.print()}
-                        className="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white">
-                  <Printer size={13} /> Imprimir formulario
-                </button>
+                <div className="ml-auto flex items-center gap-2 flex-wrap">
+                  {/* PDF oficial sobre plantilla de la organización */}
+                  {/* Para el S-25c se codifican las respuestas del cuestionario en &a= */}
+                  <a href={formTab === 's25c'
+                        ? `/api/cuentas/forms?kind=s25c&sy=${encodeURIComponent(sy)}&quarter=${quarter}&a=${encodeURIComponent(
+                            Object.entries(s25cAnswers).filter(([,v])=>v.answer).map(([k,v])=>`${k}:${v.answer}`).join(',')
+                          )}${auditorName ? `&auditor=${encodeURIComponent(auditorName)}` : ''}${secretarioName ? `&secretario=${encodeURIComponent(secretarioName)}` : ''}`
+                        : `/api/cuentas/forms?kind=${formTab}&ym=${ym}`}
+                     target="_blank" rel="noopener noreferrer"
+                     className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-800 text-white">
+                    <Download size={13} /> PDF oficial
+                  </a>
+                  <a href={formTab === 's25c'
+                        ? `/api/cuentas/forms?kind=s25c&sy=${encodeURIComponent(sy)}&quarter=${quarter}&calibrate=1`
+                        : `/api/cuentas/forms?kind=${formTab}&ym=${ym}&calibrate=1`}
+                     target="_blank" rel="noopener noreferrer"
+                     title="Rellena cada casilla con su nombre, para ajustar el mapa de campos"
+                     className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600">
+                    <Sparkles size={13} /> Calibrar
+                  </a>
+                  {formTab === 's25c' && (
+                    <a href={`/api/cuentas/forms?kind=receipts-quarter&sy=${encodeURIComponent(sy)}&quarter=${quarter}`}
+                       target="_blank" rel="noopener noreferrer"
+                       title="Reporte HTML de todos los egresos del trimestre con indicación de comprobante"
+                       className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white">
+                      <Download size={13} /> Recibos del trimestre
+                    </a>
+                  )}
+                  <button onClick={() => window.print()}
+                          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white">
+                    <Printer size={13} /> Imprimir
+                  </button>
+                </div>
               </div>
 
               {formTab === 's26' && s26 && (
@@ -445,7 +487,11 @@ export default function CuentasPage() {
                   <FormHeader title="INFORME SOBRE LA AUDITORÍA DE LAS CUENTAS DE LA CONGREGACIÓN"
                               subtitle="S-25c" cfg={cfg}
                               right={`${s25c.quarterLabel} · Año de Servicio ${s25c.serviceYear}`} />
-                  <S25cReport s25c={s25c} />
+                  <S25cReport
+                    s25c={s25c}
+                    answers={s25cAnswers}
+                    onAnswerChange={(k, v: S25cAnswer) => setS25cAnswers(a => ({ ...a, [k]: v }))}
+                  />
                 </>
               )}
             </div>
@@ -466,6 +512,12 @@ export default function CuentasPage() {
 
           {/* ── Códigos CT ────────────────────────────────────────────────── */}
           {view === 'codes' && <CodesPanel codes={codes} api={api} reload={loadCodes} flash={flash} setError={setError} />}
+
+          {/* ── Lectura de recibos con IA ─────────────────────────────────── */}
+          {view === 'ocr' && (
+            <OcrPanel api={api} codes={codes} flash={flash} setError={setError}
+                      onRegistered={() => loadMonth(ym)} />
+          )}
 
           {/* ── Importar respaldo ─────────────────────────────────────────── */}
           {view === 'import' && (
@@ -732,9 +784,9 @@ interface CierrePreview {
 }
 
 const KIND_LABEL: Record<CierreEntry['kind'], string> = {
-  remit:   'Remesa de obra mundial',
-  res_pub: 'Resolución por publicador',
-  res_pct: 'Resolución porcentual',
+  remit:       'Remesa de obra mundial',
+  res_pub:     'Resolución por publicador',
+  res_pct:     'Resolución porcentual',
   maintenance: 'Mantenimiento',
 };
 
@@ -976,7 +1028,8 @@ function ConfigPanel({ cfg, setCfg, codes, api, flash, setError }: {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(v),
       });
-      setCfg(v); setDraft(null); flash('Encabezado actualizado');
+      setCfg({ ...v, ai_api_key: undefined, has_ai_key: v.ai_api_key ? v.ai_api_key !== '-' : cfg.has_ai_key });
+      setDraft(null); flash('Configuración guardada');
     } catch (e) { setError(e instanceof Error ? e.message : 'Error'); }
     finally { setBusy(false); }
   }
@@ -1018,6 +1071,11 @@ function ConfigPanel({ cfg, setCfg, codes, api, flash, setError }: {
               <input value={v.state} onChange={e => edit({ state: e.target.value })}
                      placeholder="MICH" className={inp} />
             </div>
+          </div>
+          <div>
+            <label className={lbl}>Siervo de cuentas</label>
+            <input value={v.treasurer_name ?? ''} onChange={e => edit({ treasurer_name: e.target.value })}
+                   placeholder="Nombre completo" className={inp} />
           </div>
         </div>
       </div>
@@ -1079,7 +1137,51 @@ function ConfigPanel({ cfg, setCfg, codes, api, flash, setError }: {
               Por omisión, 10% de las donaciones para la congregación (código C) del mes.
             </p>
           </div>
+
+          <div className="pt-3 border-t border-gray-100 dark:border-gray-700">
+            <p className="text-xs font-semibold mb-2">Mantenimiento mensual</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={lbl}>Monto fijo ($)</label>
+                <input type="number" min="0" step="0.01" value={v.maintenance_amount}
+                       onChange={e => edit({ maintenance_amount: Number(e.target.value) || 0 })}
+                       className={inp} />
+              </div>
+              <div>
+                <label className={lbl}>Código</label>
+                {codeSelect(v.maintenance_code, c => edit({ maintenance_code: c }), 'expense')}
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">
+              Gasto mensual fijo de mantenimiento del Salón del Reino. En 0 no se genera el asiento.
+            </p>
+          </div>
         </div>
+      </div>
+
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <h2 className="font-semibold text-sm mb-1 flex items-center gap-1.5">
+          <Sparkles size={14} className="text-violet-500" /> Lectura de recibos con IA
+        </h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          Clave de Google AI Studio (Gemini) para leer los recibos, tanto desde «Subir Recibo»
+          como desde el bot de Telegram. Consíguela gratis en{' '}
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+             className="text-sky-600 dark:text-sky-400 underline">aistudio.google.com/apikey</a>.
+        </p>
+
+        <label className={lbl}>
+          Clave de API {cfg.has_ai_key && <span className="text-emerald-600 dark:text-emerald-400">· hay una guardada</span>}
+        </label>
+        <input type="password" autoComplete="off"
+               value={v.ai_api_key ?? ''}
+               onChange={e => edit({ ai_api_key: e.target.value })}
+               placeholder={cfg.has_ai_key ? '•••••••• (deja vacío para conservarla)' : 'AIza…'}
+               className={inp} />
+        <p className="text-[11px] text-gray-400 mt-1">
+          Por seguridad no se muestra la clave guardada. Deja el campo vacío para conservarla,
+          o escribe un guion (<code>-</code>) para borrarla.
+        </p>
       </div>
 
       <button onClick={save} disabled={busy}

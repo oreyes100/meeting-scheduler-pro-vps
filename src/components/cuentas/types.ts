@@ -104,10 +104,21 @@ export interface S30 {
 
 export interface S25c {
   serviceYear: string; quarter: number; quarterLabel: string;
-  months: { ym: string; label: string; income: number; expense: number; omIncome: number; omRemit: number }[];
+  months: {
+    ym: string; label: string;
+    income: number; expense: number;
+    omIncome: number; omRemit: number;
+    expenseCount: number; expenseWithReceipt: number;
+  }[];
   totals: { income: number; expense: number; omIncome: number; omRemit: number };
   openingFunds: number; closingFunds: number; reconciled: boolean;
+  /** Respuestas pre-computadas por el sistema. El auditor puede editarlas. */
+  autoAnswers: Record<string, string>;
 }
+
+export type S25cAnswerValue = '' | 'si' | 'no' | 'na';
+export interface S25cAnswer { answer: S25cAnswerValue; notes: string }
+export type S25cAnswers = Record<string, S25cAnswer>
 
 export interface Summary {
   serviceYear: string;
@@ -123,6 +134,8 @@ export interface Reconcile {
 
 export interface CuentasConfig {
   label: string; city: string; state: string;
+  /** Nombre del siervo de cuentas — aparece en el formulario S-30-S. */
+  treasurer_name: string;
   /** Parámetros del cierre de mes. */
   remit_code: string;
   res_pub_code: string;
@@ -130,16 +143,23 @@ export interface CuentasConfig {
   res_pct_code: string;
   res_pct_percent: number;
   res_pct_source: string;
+  maintenance_code: string;
+  maintenance_amount: number;
+  /** El servidor nunca devuelve la clave, solo si existe. */
+  has_ai_key?: boolean;
+  ai_api_key?: string;
 }
 
 export const EMPTY_CONFIG: CuentasConfig = {
-  label: '', city: '', state: '',
+  label: '', city: '', state: '', treasurer_name: '',
   remit_code: 'SOM', res_pub_code: 'RM', res_pub_amount: 0,
   res_pct_code: 'RM', res_pct_percent: 10, res_pct_source: 'C',
+  maintenance_code: 'GM', maintenance_amount: 0,
+  has_ai_key: false,
 };
 
 export interface CierreEntry {
-  kind: 'remit' | 'res_pub' | 'res_pct';
+  kind: 'remit' | 'res_pub' | 'res_pct' | 'maintenance';
   code: string;
   description: string;
   amount: number;

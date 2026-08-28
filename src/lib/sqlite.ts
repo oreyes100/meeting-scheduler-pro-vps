@@ -254,6 +254,9 @@ export function getDb(): Database.Database {
     `ALTER TABLE cuentas_config ADD COLUMN res_pct_source text NOT NULL DEFAULT 'C'`,
     // Clave de IA por congregación para la lectura de recibos (agente Telegram).
     // Tiene prioridad sobre GEMINI_API_KEY global del servidor.
+    `ALTER TABLE cuentas_config ADD COLUMN treasurer_name text`,
+    `ALTER TABLE cuentas_config ADD COLUMN maintenance_code text NOT NULL DEFAULT 'GM'`,
+    `ALTER TABLE cuentas_config ADD COLUMN maintenance_amount real NOT NULL DEFAULT 0`,
     `ALTER TABLE cuentas_config ADD COLUMN ai_api_key text`,
   ];
   for (const sql of runMigrations) {
