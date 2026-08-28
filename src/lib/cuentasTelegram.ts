@@ -13,6 +13,7 @@
  */
 import { randomUUID } from 'crypto';
 import { getDb } from './sqlite';
+import { geminiGenerate } from './receiptOcr';
 import {
   ACCOUNTS, TYPES, round2,
   type Account, type TxType,
@@ -214,7 +215,7 @@ function resolveCodes(congreId: string, items: ProposalItem[]): ProposalItem[] {
 export async function ocrReceipt(
   apiKey: string, model: string, congreId: string,
   base64: string, mimeType: string,
-): Promise<{ ok: true; proposal: Omit<Proposal, 'model'> } | { ok: false; error: string }> {
+): Promise<{ ok: true; proposal: Omit<Proposal, 'model'>; model: string } | { ok: false; error: string }> {
   const prompt = `
 Eres un lector de recibos contables para la contabilidad de una congregación.
 Analiza la imagen/PDF adjunto y extrae las transacciones visibles.
@@ -236,39 +237,30 @@ Reglas:
 - Monto como número positivo. Fecha del recibo; si no se ve, usa hoy.`.trim();
 
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mimeType, data: base64 } },
-            ],
-          }],
-          generationConfig: { temperature: 0 },
-        }),
-      },
-    );
+    // Misma resiliencia que la web: reintentos con backoff y cadena de modelos
+    // de respaldo cuando Google devuelve 429/503 por alta demanda.
+    const out = await geminiGenerate(apiKey, {
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mimeType, data: base64 } },
+        ],
+      }],
+      generationConfig: { temperature: 0 },
+    }, model);
+    if (!out.ok) return { ok: false, error: out.error };
 
-    const json = await res.json() as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-      error?: { message?: string };
-    };
-
-    if (!res.ok || json.error) {
-      return { ok: false, error: json.error?.message ?? `IA HTTP ${res.status}` };
-    }
-    const text = json.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? '';
-    const parsed = extractJson(text);
+    const parsed = extractJson(out.text);
     if (!parsed) return { ok: false, error: 'La IA no devolvió JSON legible' };
 
     const items = resolveCodes(congreId, normalizeItems(parsed.items));
     if (!items.length) return { ok: false, error: 'No pude leer montos legibles en el recibo' };
 
-    return { ok: true, proposal: { items, confidence: parsed.confidence === 'low' ? 'low' : 'high' } };
+    return {
+      ok: true,
+      proposal: { items, confidence: parsed.confidence === 'low' ? 'low' : 'high' },
+      model: out.model,
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Error llamando a la IA' };
   }
@@ -425,7 +417,7 @@ async function handleMessage(msg: TgMessage): Promise<void> {
   const ocr = await ocrReceipt(apiKey, model, settings.congregation_id ?? '', dl.base64, dl.mime);
   if (!ocr.ok) { await fail('No pude leer el recibo.', ocr.error); return; }
 
-  const proposal: Proposal = { ...ocr.proposal, model };
+  const proposal: Proposal = { ...ocr.proposal, model: ocr.model };
   saveProposal(pendingId, proposal);
 
   await tgCall(botToken, 'sendMessage', {

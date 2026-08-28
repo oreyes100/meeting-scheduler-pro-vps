@@ -103,6 +103,84 @@ function parseTransactions(text: string, codes: CodeRow[]): ReceiptTx[] | null {
     .filter(t => t.amount > 0);
 }
 
+export type GeminiResult = {
+  ok: true; text: string; model: string;
+} | {
+  ok: false; error: string;
+}
+
+/**
+ * Llamada generateContent resiliente: reintentos con backoff ante picos de
+ * demanda (429/500/502/503) y recorrido de la cadena de modelos hasta que uno
+ * responda. `preferredModel` (opcional) se prueba primero. Compartida por la
+ * lectura de recibos web y el agente de Telegram para que ambos degraden igual.
+ */
+export async function geminiGenerate(
+  apiKey: string, bodyObj: Record<string, unknown>, preferredModel?: string,
+): Promise<GeminiResult> {
+  const chain = preferredModel
+    ? [preferredModel, ...MODELS.filter(m => m !== preferredModel)]
+    : MODELS;
+  const notes: string[] = [];
+
+  for (const model of chain) {
+    for (let attempt = 0; attempt < ATTEMPTS_PER_MODEL; attempt++) {
+      if (attempt > 0) await sleep(backoffMs(attempt - 1));
+
+      let res: Response;
+      try {
+        res = await fetch(ENDPOINT(model, apiKey), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyObj),
+          signal: AbortSignal.timeout(90_000),
+        });
+      } catch {
+        notes.push(`${model}: red/timeout`);
+        continue; // mismo modelo de nuevo; luego la cadena
+      }
+
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const text: string = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? '';
+        if (text.trim()) return { ok: true, text, model };
+        notes.push(`${model}: respuesta vacía`);
+        continue;
+      }
+
+      const detail = await res.text().catch(() => '');
+
+      // Problemas de clave/permiso: cambiar de modelo no ayuda; abortar claro.
+      if (res.status === 400 && /API key not valid/i.test(detail)) {
+        return { ok: false, error: 'La clave de API no es válida. Revísala en Configuración → Lectura de recibos.' };
+      }
+      if (res.status === 403) {
+        return { ok: false, error: 'La clave no tiene permiso para usar la API de Gemini. Habilítala en el proyecto de Google.' };
+      }
+
+      if (res.status === 404) {
+        // El modelo no existe para esta clave: pasar al siguiente sin reintentar.
+        notes.push(`${model}: no disponible (404)`);
+        break;
+      }
+
+      if (TRANSIENT.has(res.status)) {
+        notes.push(`${model}: ${res.status}`);
+        continue; // reintento y luego siguiente modelo
+      }
+
+      return { ok: false, error: `La lectura con IA falló (${res.status}). ${detail.slice(0, 300)}` };
+    }
+  }
+
+  return {
+    ok: false,
+    error:
+      'La lectura con IA no estuvo disponible en este momento (alta demanda de Google). ' +
+      `Modelos intentados: ${notes.join(', ') || chain.join(', ')}. Vuelve a intentarlo en unos segundos.`,
+  };
+}
+
 /** Lee un recibo y devuelve transacciones propuestas. Nunca escribe en la base. */
 export async function runReceiptOcr(
   dataUrl: string, codes: CodeRow[], apiKey?: string | null,
@@ -124,70 +202,16 @@ export async function runReceiptOcr(
   }
   if (Buffer.byteLength(b64, 'base64') > MAX_BYTES) return { error: 'El archivo supera los 8 MB' };
 
-  const body = JSON.stringify({
+  const out = await geminiGenerate(key, {
     contents: [{ parts: [
       { text: buildPrompt(codes) },
       { inline_data: { mime_type: mimeType, data: b64 } },
     ] }],
     generationConfig: { temperature: 0, responseMimeType: 'application/json' },
   });
+  if (!out.ok) return { error: out.error };
 
-  const transientNotes: string[] = [];
-
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt < ATTEMPTS_PER_MODEL; attempt++) {
-      if (attempt > 0) await sleep(backoffMs(attempt - 1));
-
-      let res: Response;
-      try {
-        res = await fetch(ENDPOINT(model, key), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-          signal: AbortSignal.timeout(90_000),
-        });
-      } catch {
-        transientNotes.push(`${model}: red/timeout`);
-        continue; // mismo modelo de nuevo; luego la cadena
-      }
-
-      if (res.ok) {
-        const data = await res.json();
-        const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-        const transactions = parseTransactions(text, codes);
-        if (transactions) return { transactions, model };
-        transientNotes.push(`${model}: JSON ilegible`);
-        continue;
-      }
-
-      const detail = await res.text().catch(() => '');
-
-      // Problemas de clave/permiso: cambiar de modelo no ayuda; abortar claro.
-      if (res.status === 400 && /API key not valid/i.test(detail)) {
-        return { error: 'La clave de API no es válida. Revísala en Configuración → Lectura de recibos.' };
-      }
-      if (res.status === 403) {
-        return { error: 'La clave no tiene permiso para usar la API de Gemini. Habilítala en el proyecto de Google.' };
-      }
-
-      if (res.status === 404) {
-        // El modelo no existe para esta clave: pasar al siguiente sin reintentar.
-        transientNotes.push(`${model}: no disponible (404)`);
-        break;
-      }
-
-      if (TRANSIENT.has(res.status)) {
-        transientNotes.push(`${model}: ${res.status}`);
-        continue; // reintento y luego siguiente modelo
-      }
-
-      return { error: `La lectura con IA falló (${res.status}). ${detail.slice(0, 300)}` };
-    }
-  }
-
-  return {
-    error:
-      'La lectura con IA no estuvo disponible en este momento (alta demanda de Google). ' +
-      `Modelos intentados: ${transientNotes.join(', ') || MODELS.join(', ')}. Vuelve a intentarlo en unos segundos.`,
-  };
+  const transactions = parseTransactions(out.text, codes);
+  if (!transactions) return { error: 'La IA no devolvió un JSON legible.' };
+  return { transactions, model: out.model };
 }
