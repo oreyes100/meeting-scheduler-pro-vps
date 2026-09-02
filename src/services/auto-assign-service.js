@@ -49,18 +49,22 @@ export async function runAutoAssignment(meetingId, customClient = null) {
     return { assignedCount: 0, totalCount: 0, logs };
   }
 
-  // 3. Fetch all active publishers
+  // 3. Fetch all active publishers for this meeting's congregation
   let users = [];
-  const { data: activeUsers, error: usersError } = await supabase
-    .from('users')
-    .select('*')
-    .eq('is_active', true);
+  let usersQuery = supabase.from('users').select('*').eq('is_active', true);
+  if (meeting?.congregation_id) {
+    usersQuery = usersQuery.eq('congregation_id', meeting.congregation_id);
+  }
+
+  const { data: activeUsers, error: usersError } = await usersQuery;
 
   if (usersError) {
     // Fallback in case is_active column doesn't exist yet
-    const { data: usersFallback, error: fallbackError } = await supabase
-      .from('users')
-      .select('*');
+    let fallbackQuery = supabase.from('users').select('*');
+    if (meeting?.congregation_id) {
+      fallbackQuery = fallbackQuery.eq('congregation_id', meeting.congregation_id);
+    }
+    const { data: usersFallback, error: fallbackError } = await fallbackQuery;
     if (fallbackError) throw new Error(`Failed to fetch users: ${fallbackError.message}`);
     users = usersFallback || [];
   } else {

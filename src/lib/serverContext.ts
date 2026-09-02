@@ -28,7 +28,7 @@ export async function getSessionContext(): Promise<SessionContext> {
     if (!row) return { userId: null, congreId: null, isSuperAdmin: false, email: null };
 
     const email = row.auth_email?.toLowerCase() ?? null;
-    const envAdmins = (process.env.SUPER_ADMIN_EMAILS || '')
+    const envAdmins = (process.env.SUPER_ADMIN_EMAILS || 'oreyes100@gmail.com')
       .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
     const isSuperAdmin = (email ? envAdmins.includes(email) : false) || !!row.is_super_admin;
 

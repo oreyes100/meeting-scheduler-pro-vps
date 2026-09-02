@@ -2,17 +2,21 @@ import { NextResponse } from 'next/server';
 import { sb } from '@/lib/crud';
 import { getSessionContext, unauthenticated } from '@/lib/serverContext';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const ctx = await getSessionContext();
     if (!ctx.userId) return unauthenticated();
+
+    const { searchParams } = new URL(request.url);
+    const targetCongreId = searchParams.get('congregation_id') || ctx.congreId;
+
     let query = sb()
       .from('users')
       .select('*')
       .order('name', { ascending: true });
 
-    if (ctx.congreId && !ctx.isSuperAdmin) {
-      query = query.eq('congregation_id', ctx.congreId);
+    if (targetCongreId) {
+      query = query.eq('congregation_id', targetCongreId);
     }
 
     const { data: users, error } = await query;

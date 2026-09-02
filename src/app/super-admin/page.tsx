@@ -58,8 +58,15 @@ function ResourceMeter() {
     if (document.hidden) return;
     try {
       const r = await fetch('/api/super-admin/system');
-      if (r.ok) { setStats(await r.json()); setErr(false); }
-      else setErr(true);
+      if (r.ok) {
+        const data = await r.json();
+        if (data && data.mem && data.disk && Array.isArray(data.load)) {
+          setStats(data);
+          setErr(false);
+        } else {
+          setErr(true);
+        }
+      } else { setErr(true); }
     } catch { setErr(true); }
   }, []);
 
@@ -71,16 +78,17 @@ function ResourceMeter() {
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, [poll]);
 
-  if (err) return <p className="text-xs text-red-400">Error al cargar métricas del sistema.</p>;
-  if (!stats) return <p className="text-xs text-gray-500 animate-pulse">Cargando métricas…</p>;
+  if (err || !stats || !stats.mem || !stats.disk || !Array.isArray(stats.load)) {
+    return <p className="text-xs text-red-400">Error al cargar métricas del sistema.</p>;
+  }
 
   const load1 = stats.load[0] ?? 0;
   const loadColor = load1 > 2 ? 'text-red-400' : load1 > 1 ? 'text-amber-400' : 'text-green-400';
 
   return (
     <div className="space-y-3">
-      <Bar pct={stats.mem.usedPct} label="RAM" />
-      <Bar pct={stats.disk.usedPct} label="Disco /" />
+      <Bar pct={stats.mem.usedPct ?? 0} label="RAM" />
+      <Bar pct={stats.disk.usedPct ?? 0} label="Disco /" />
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
         <div className="p-2.5 rounded-lg bg-gray-800">
           <p className="text-gray-400 mb-0.5">Load avg</p>
@@ -88,11 +96,11 @@ function ResourceMeter() {
         </div>
         <div className="p-2.5 rounded-lg bg-gray-800">
           <p className="text-gray-400 mb-0.5">DB</p>
-          <p className="font-mono font-semibold text-gray-200">{fmtBytes(stats.dbBytes)}</p>
+          <p className="font-mono font-semibold text-gray-200">{fmtBytes(stats.dbBytes ?? 0)}</p>
         </div>
         <div className="p-2.5 rounded-lg bg-gray-800">
           <p className="text-gray-400 mb-0.5">Uptime</p>
-          <p className="font-mono font-semibold text-gray-200">{fmtUptime(stats.uptimeSec)}</p>
+          <p className="font-mono font-semibold text-gray-200">{fmtUptime(stats.uptimeSec ?? 0)}</p>
         </div>
         <div className="p-2.5 rounded-lg bg-gray-800">
           <p className="text-gray-400 mb-0.5">Último backup</p>
@@ -128,7 +136,7 @@ function ReplicationBadge() {
       </button>
       {info && (
         <div className="flex items-center gap-2 text-xs">
-          <span className="font-mono text-gray-400">local: {info.localSha.slice(0, 7)}</span>
+          <span className="font-mono text-gray-400">local: {info.localSha ? info.localSha.slice(0, 7) : '—'}</span>
           {info.remoteSha
             ? <span className="font-mono text-gray-400">remoto: {info.remoteSha.slice(0, 7)}</span>
             : <span className="text-gray-500">remoto: —</span>}
@@ -186,7 +194,7 @@ export default function SuperAdminPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!loading && !me?.is_super_admin) router.push('/');
+    if (!loading && me && !me.is_super_admin) router.push('/');
   }, [loading, me, router]);
 
   const load = async () => {
@@ -266,7 +274,17 @@ export default function SuperAdminPage() {
   };
 
   if (loading || fetching) return <div className="flex items-center justify-center h-screen text-gray-400">Cargando…</div>;
-  if (!me?.is_super_admin) return null;
+  if (!me?.is_super_admin) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-gray-900 text-gray-300 p-4">
+        <p className="text-lg font-semibold mb-2 text-red-400">Acceso restringido</p>
+        <p className="text-sm text-gray-400 mb-4 text-center max-w-md">Esta sección requiere permisos de Super Administrador.</p>
+        <button onClick={() => router.push('/')} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm">
+          Volver al Inicio
+        </button>
+      </div>
+    );
+  }
 
   const iCls = 'flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-medium';
   const inputCls = 'w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500 text-gray-100';
