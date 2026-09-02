@@ -28,3 +28,8 @@
 
 ---
 *Actualizado: 2026-08-23*
+
+## Sesión sincronización (2026-08-23 noche)
+- Commit **`fe03076`**: port desde producción (meeting-scheduler-pro) de export CSV transacciones + sección Cuentas en backup + filenames por sección; MÁS fixes propios del lab: restore atómico con FK off + orden canónico + stubs congregations, helpers setForeignKeys/foreignKeyCheck en db.ts, label sección "Cuentas v2 (Contabilidad)"
+- Verificado en lab: build EXIT=0, PM2 reload, CSV export 80 filas (incluye recibos aprobados vía Telegram), ZIP multisección OK, login/super-admin 200
+- `.250` realineado a origin/vps-selfhosted (reset --hard, tree limpio salvo nohup.out)

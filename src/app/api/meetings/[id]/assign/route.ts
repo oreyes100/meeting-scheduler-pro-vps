@@ -30,7 +30,7 @@ export async function POST(
     }
 
     console.log(`🤖 Triggering auto-assignment for meeting: ${meetingId}`);
-    const result = await runAutoAssignment(meetingId);
+    const result = await runAutoAssignment(meetingId, sb());
 
     return NextResponse.json({
       success: true,

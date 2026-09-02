@@ -307,24 +307,23 @@ export function MeetingDashboard({
               </div>
 
              {treasuresTalk && (
-               <div className="flex items-center">
-                 <label className="w-[120px] text-gray-700 dark:text-gray-300 text-right pr-2">{treasuresLabel}</label>
-                 <select className="w-[180px] border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200" value={treasuresTalk.assigned_user_id || ''} onChange={e => handlePartChange(treasuresTalk.id, 'assigned_user_id', e.target.value)}>
+               <div className="flex items-center gap-1 py-0.5">
+                 <label className="w-[120px] text-gray-700 dark:text-gray-300 text-right pr-2 text-xs shrink-0">{treasuresLabel}</label>
+                 <select className="w-[160px] shrink-0 border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200" value={treasuresTalk.assigned_user_id || ''} onChange={e => handlePartChange(treasuresTalk.id, 'assigned_user_id', e.target.value)}>
                      <option value=""></option>
                      {optionsFor('can_be_speaker', 'treasures_talk')}
                  </select>
-                 <input type="text" className="w-[300px] border border-gray-300 dark:border-gray-600 p-0.5 h-6 ml-2 text-xs" value={treasuresTalk.title || ''} onChange={e => handlePartChange(treasuresTalk.id, 'title', e.target.value)} />
-                 <input type="number" className="w-12 border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-center text-xs ml-1" value={treasuresTalk.duration_minutes || ''} onChange={e => handlePartChange(treasuresTalk.id, 'duration_minutes', parseInt(e.target.value))} />
-                 <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-300 text-xs ml-1">{t('meeting.min')}</span>
-                 <div className="flex-1"></div>
-                 <label className="w-[120px] text-gray-700 dark:text-gray-300 text-right pr-2">{gemsLabel}</label>
-                 <select className="w-[180px] border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200" value={spiritualGems?.assigned_user_id || ''} onChange={e => spiritualGems && handlePartChange(spiritualGems.id, 'assigned_user_id', e.target.value)}>
+                 <input type="text" title={treasuresTalk.title || ''} className="flex-1 min-w-0 border border-gray-300 dark:border-gray-600 p-0.5 h-6 ml-1 text-xs bg-white dark:bg-gray-700 dark:text-gray-200" value={treasuresTalk.title || ''} onChange={e => handlePartChange(treasuresTalk.id, 'title', e.target.value)} />
+                 <input type="number" className="w-10 shrink-0 border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-center text-xs ml-1" value={treasuresTalk.duration_minutes || ''} onChange={e => handlePartChange(treasuresTalk.id, 'duration_minutes', parseInt(e.target.value))} />
+                 <span className="text-gray-600 dark:text-gray-300 text-xs ml-0.5 shrink-0">{t('meeting.min')}</span>
+                 <label className="w-[120px] shrink-0 text-gray-700 dark:text-gray-300 text-right pr-2 text-xs ml-2">{gemsLabel}</label>
+                 <select className="w-[160px] shrink-0 border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200" value={spiritualGems?.assigned_user_id || ''} onChange={e => spiritualGems && handlePartChange(spiritualGems.id, 'assigned_user_id', e.target.value)}>
                      <option value=""></option>
                      {optionsFor('can_do_gems', 'spiritual_gems')}
                  </select>
-                 <FileText size={14} className="text-[#3b82f6] ml-1" />
-                 <input type="number" className="w-12 border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-center text-xs ml-1" value={spiritualGems?.duration_minutes || ''} onChange={e => spiritualGems && handlePartChange(spiritualGems.id, 'duration_minutes', parseInt(e.target.value))} />
-                 <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-300 text-xs ml-1">{t('meeting.min')}</span>
+                 <FileText size={14} className="text-[#3b82f6] ml-1 shrink-0" />
+                 <input type="number" className="w-10 shrink-0 border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-center text-xs ml-1" value={spiritualGems?.duration_minutes || ''} onChange={e => spiritualGems && handlePartChange(spiritualGems.id, 'duration_minutes', parseInt(e.target.value))} />
+                 <span className="text-gray-600 dark:text-gray-300 text-xs ml-0.5 shrink-0">{t('meeting.min')}</span>
                </div>
              )}
 
@@ -361,46 +360,71 @@ export function MeetingDashboard({
            </div>
             <div className="px-1 flex flex-col gap-1.5">
               {studentParts.map((part: any) => {
-                // talk → solo varones, sin ayudante
-                // explaining_beliefs → ambos géneros, ayudante opcional
-                // demás → ambos géneros, ayudante requerido
-                const isTalk = part.student_part_type === 'talk';
-                const isExplainingBeliefs = part.student_part_type === 'explaining_beliefs';
-                const showAssistant = !isTalk; // explaining_beliefs SÍ muestra ayudante (opcional)
-                const maleOnly = isTalk; // explaining_beliefs permite ambos géneros
-                const studentRoleKey = `student_${part.student_part_type || 'starting_conversation'}`;
+                // Detect "¿Qué diría?" parts — treated as discourse, Elders/MS only, no assistant
+                const normalizedTitle = (part.title || '').toLowerCase()
+                  .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                const isQueDiria = normalizedTitle.includes('que diria') || normalizedTitle.includes('que dira');
+
+                const isTalk = part.student_part_type === 'talk' || isQueDiria;
+                const showAssistant = !isTalk;
+                // For "¿Qué diría?": only Elders/MS (can_be_speaker or can_be_chairman), male only
+                const maleOnly = isTalk;
+                const studentRoleKey = isQueDiria ? 'living_part' : `student_${part.student_part_type || 'starting_conversation'}`;
+                const assigneeFilter = isQueDiria
+                  ? (p: any) => p.gender === 'male' && (p.can_be_chairman || p.can_be_speaker)
+                  : (maleOnly ? (p: any) => p.gender === 'male' : undefined);
+
                 return (
-                <div key={part.id} className="flex items-center">
-                  <label className="w-[28px] text-gray-700 dark:text-gray-300 text-right pr-2 text-xs font-semibold">{part.part_number}.</label>
-                  <select className="w-[170px] border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-xs bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200" value={part.student_part_type || ''} onChange={e => {
-                    handlePartChange(part.id, 'student_part_type', e.target.value);
-                    if (e.target.value === 'talk') handlePartChange(part.id, 'assistant_user_id', null);
-                  }}>
-                    <option value="starting_conversation">{t('meeting.startingConversation')}</option>
-                    <option value="following_up">{t('meeting.followingUp')}</option>
-                    <option value="making_disciples">{t('meeting.makingDisciples')}</option>
-                    <option value="explaining_beliefs">{t('meeting.explainingBeliefs')}</option>
-                    <option value="talk">{t('meeting.talk')}</option>
+                <div key={part.id} className="flex items-center gap-1 py-0.5">
+                  <label className="w-[24px] shrink-0 text-gray-700 dark:text-gray-300 text-right pr-1 text-xs font-semibold">{part.part_number}.</label>
+                  {isQueDiria ? (
+                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border border-red-300 dark:border-red-700">
+                      Discurso
+                    </span>
+                  ) : (
+                    <select className="w-[150px] shrink-0 border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-xs bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200" value={part.student_part_type || ''} onChange={e => {
+                      handlePartChange(part.id, 'student_part_type', e.target.value);
+                      if (e.target.value === 'talk') handlePartChange(part.id, 'assistant_user_id', null);
+                    }}>
+                      <option value="starting_conversation">{t('meeting.startingConversation')}</option>
+                      <option value="following_up">{t('meeting.followingUp')}</option>
+                      <option value="making_disciples">{t('meeting.makingDisciples')}</option>
+                      <option value="explaining_beliefs">{t('meeting.explainingBeliefs')}</option>
+                      <option value="talk">{t('meeting.talk')}</option>
+                    </select>
+                  )}
+                  <select
+                    className="w-[150px] shrink-0 border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200"
+                    value={part.assigned_user_id || ''}
+                    onChange={e => handlePartChange(part.id, 'assigned_user_id', e.target.value)}
+                  >
+                    <option value=""></option>
+                    {isQueDiria
+                      ? optionsFor(null, studentRoleKey, assigneeFilter)
+                      : optionsFor('can_do_student_parts', studentRoleKey, maleOnly ? (p: any) => p.gender === 'male' : undefined)
+                    }
                   </select>
-                  <select className="w-[170px] border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200 ml-1" value={part.assigned_user_id || ''} onChange={e => handlePartChange(part.id, 'assigned_user_id', e.target.value)}>
-                       <option value=""></option>
-                       {optionsFor('can_do_student_parts', studentRoleKey, maleOnly ? (p => p.gender === 'male') : undefined)}
-                  </select>
-                  <input type="text" className="w-[260px] border border-gray-300 dark:border-gray-600 p-0.5 h-6 ml-2 text-xs" value={part.title || ''} onChange={e => handlePartChange(part.id, 'title', e.target.value)} />
-                  <FileText size={14} className="text-[#3b82f6] ml-1" />
-                  <input type="number" className="w-10 border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-center text-xs ml-1" value={part.duration_minutes || ''} onChange={e => handlePartChange(part.id, 'duration_minutes', parseInt(e.target.value))} />
-                  <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500 dark:text-gray-400 dark:text-gray-300 text-xs ml-1">{t('meeting.min')}</span>
+                  <input
+                    type="text"
+                    title={part.title || ''}
+                    className="flex-1 min-w-0 border border-gray-300 dark:border-gray-600 p-0.5 h-6 ml-1 text-xs bg-white dark:bg-gray-700 dark:text-gray-200"
+                    value={part.title || ''}
+                    onChange={e => handlePartChange(part.id, 'title', e.target.value)}
+                  />
+                  <FileText size={14} className="text-[#3b82f6] ml-1 shrink-0" />
+                  <input type="number" className="w-10 shrink-0 border border-gray-300 dark:border-gray-600 p-0.5 h-6 text-center text-xs ml-1" value={part.duration_minutes || ''} onChange={e => handlePartChange(part.id, 'duration_minutes', parseInt(e.target.value))} />
+                  <span className="text-gray-600 dark:text-gray-300 text-xs ml-0.5 shrink-0">{t('meeting.min')}</span>
 
-                  <div className="flex-1"></div>
-
-                  {showAssistant && (
-                  <>
-                  <label className="text-gray-700 dark:text-gray-300 text-right pr-2 text-xs">{t('meeting.assistant')}</label>
-                  <select className="w-[170px] border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200" value={part.assistant_user_id || ''} onChange={e => handlePartChange(part.id, 'assistant_user_id', e.target.value || null)}>
-                       <option value="">— sin ayudante —</option>
-                       {optionsFor('can_be_assistant', 'assistant')}
-                  </select>
-                  </>
+                  {showAssistant ? (
+                    <>
+                      <label className="text-gray-700 dark:text-gray-300 text-right pr-1 text-xs ml-1 shrink-0">{t('meeting.assistant')}</label>
+                      <select className="w-[150px] shrink-0 border border-gray-300 dark:border-gray-600 bg-[#b4d5eb] dark:bg-[#1e3a4a] p-0.5 h-6 text-xs dark:text-gray-200" value={part.assistant_user_id || ''} onChange={e => handlePartChange(part.id, 'assistant_user_id', e.target.value || null)}>
+                        <option value="">— sin ayudante —</option>
+                        {optionsFor('can_be_assistant', 'assistant')}
+                      </select>
+                    </>
+                  ) : (
+                    <div className="w-[150px] shrink-0" />
                   )}
                 </div>
                 );

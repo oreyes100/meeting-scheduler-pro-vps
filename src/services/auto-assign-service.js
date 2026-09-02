@@ -345,15 +345,34 @@ export async function runAutoAssignment(meetingId, customClient = null) {
 
     // 4. Student Parts (Apply Yourself to the Field Ministry)
     if (part.part_type === 'student_part' && !part.assigned_user_id) {
-      const isTalk = part.student_part_type === 'talk';
-      const candidates = users.filter(u => !assignedInThisMeeting.has(u.id) && u.can_do_student_parts && (!isTalk || u.gender === 'male'));
-      const sorted = getLRASortedUsers(candidates, 'student_part');
+      // Special rule: "¿Qué diría?" parts are treated as a discourse (discurso).
+      // They must be assigned to an Elder or Ministerial Servant (male), with NO assistant.
+      const normalizedTitle = (part.title || '').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const isQueDiria = normalizedTitle.includes('que diria') || normalizedTitle.includes('que dira');
+
+      const isTalk = part.student_part_type === 'talk' || isQueDiria;
+
+      let candidates;
+      if (isQueDiria) {
+        // Only elders (can_be_chairman) or ministerial servants (can_be_speaker) — male
+        candidates = users.filter(u =>
+          !assignedInThisMeeting.has(u.id) &&
+          u.gender === 'male' &&
+          (u.can_be_chairman || u.can_be_speaker)
+        );
+        logs.push(`ℹ️ Part "${part.title}" detected as "¿Qué diría?" — restricting to Elders/Ministerial Servants, no assistant.`);
+      } else {
+        candidates = users.filter(u => !assignedInThisMeeting.has(u.id) && u.can_do_student_parts && (!isTalk || u.gender === 'male'));
+      }
+
+      const sorted = getLRASortedUsers(candidates, isQueDiria ? 'living_part' : 'student_part');
       if (sorted.length > 0) {
         const student = sorted[0];
 
-        // Find assistant if needed
+        // Find assistant if needed (never for "¿Qué diría?" or talk)
         let assistantId = part.assistant_user_id || null;
-        if (!assistantId && part.student_part_type !== 'talk') {
+        if (!assistantId && !isTalk) {
           // Rule: assistant must have same gender as student
           const assistantCandidates = users.filter(
             u => !assignedInThisMeeting.has(u.id) &&
