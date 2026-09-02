@@ -76,4 +76,5 @@ credenciales_publicadores.csv
 
 # SQLite database and exports (personal data — never commit)
 data/
+*.db
 .verify/

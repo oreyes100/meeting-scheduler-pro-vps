@@ -11,7 +11,12 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const body = await request.json();
     let query = supabase.from('outgoing_talks').update({
       week_date: body.week_date, user_id: body.user_id,
-      congregation_name: body.congregation_name, talk_number: body.talk_number || null, notes: body.notes || null,
+      congregation_name: body.congregation_name,
+      talk_number: body.talk_number || null,
+      talk_title: body.talk_title || null,
+      contact_info: body.contact_info || null,
+      kingdom_hall_address: body.kingdom_hall_address || null,
+      notes: body.notes || null,
     }).eq('id', id);
     if (ctx.congreId && !ctx.isSuperAdmin) query = query.eq('congregation_id', ctx.congreId);
     const { error } = await query;

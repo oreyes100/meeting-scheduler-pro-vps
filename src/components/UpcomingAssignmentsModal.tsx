@@ -25,7 +25,10 @@ const POPUP_KEY = 'assignments_popup_shown';
 const UPCOMING_DAYS = 14;
 
 function formatDate(iso: string): string {
-  const d = new Date(iso + 'T00:00:00');
+  // Las reuniones se guardan con fecha de lunes; mostrar el miércoles (lunes+2).
+  const base = new Date(iso + 'T00:00:00Z');
+  const isMonday = base.getUTCDay() === 1;
+  const d = isMonday ? new Date(base.getTime() + 2 * 86400000) : base;
   return d.toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 

@@ -24,6 +24,7 @@ export const MODULES: AppModule[] = [
   { key: 'meetings', path: '/meetings', title: 'Vida y Ministerio', description: 'Programa de la reunión de entre semana', Icon: Calendar },
   { key: 'weekend', path: '/weekend', title: 'Fin de Semana', description: 'Reunión pública y Estudio de La Atalaya', Icon: BookOpen },
   { key: 'public-talks', path: '/public-talks', title: 'Discursos Públicos', description: 'Discursos locales y salientes', Icon: Mic },
+  { key: 'outgoing-speakers', path: '/outgoing-speakers', title: 'Discursantes Salientes', description: 'Programa de oradores que visitan otras congregaciones', Icon: CalendarDays },
   { key: 'territories', path: '/territories', title: 'Territorios', description: 'Gestión de territorios en mapa', Icon: MapPin },
   { key: 'field-service', path: '/field-service', title: 'Servicio del Campo', description: 'Reuniones de predicación y grupos', Icon: Briefcase },
   { key: 'field-service-reports', path: '/field-service-reports', title: 'Informes de Predicación', description: 'Registro S-1 e informes mensuales', Icon: FileText },

@@ -34,7 +34,18 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const { error } = await supabase
       .from('outgoing_talks')
-      .insert({ id, week_date: body.week_date, user_id: body.user_id, congregation_name: body.congregation_name, talk_number: body.talk_number || null, notes: body.notes || null, congregation_id: ctx.congreId ?? null });
+      .insert({
+        id,
+        week_date: body.week_date,
+        user_id: body.user_id,
+        congregation_name: body.congregation_name,
+        talk_number: body.talk_number || null,
+        talk_title: body.talk_title || null,
+        contact_info: body.contact_info || null,
+        kingdom_hall_address: body.kingdom_hall_address || null,
+        notes: body.notes || null,
+        congregation_id: ctx.congreId ?? null,
+      });
     if (error) throw error;
     const db = getDb();
     const row = db.prepare(`SELECT t.*, u.id as user_id_ref, u.first_name, u.last_name, u.name as user_name FROM outgoing_talks t LEFT JOIN users u ON u.id = t.user_id WHERE t.id = ?`).get(id) as Record<string, unknown> | undefined;

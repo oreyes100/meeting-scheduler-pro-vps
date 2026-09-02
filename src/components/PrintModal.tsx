@@ -140,13 +140,16 @@ const MONTHS_ES = [
   'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
 ];
 
-// Etiqueta de la semana: "Semana del lunes 31 de agosto" (día y mes de la
-// semana de la reunión), en lugar de la fecha suelta de la reunión.
+// Etiqueta de la semana: "Semana del miércoles 2 de septiembre" (día real de la
+// reunión entre semana = lunes+2), en lugar de la fecha del lunes de la semana.
 function weekRangeLabel(iso: string): string {
   const mon = mondayOf(iso);
-  const [, mm, dd] = mon.split('-');
+  const wed = new Date(mon + 'T00:00:00Z');
+  wed.setUTCDate(wed.getUTCDate() + 2); // miércoles
+  const mm = String(wed.getUTCMonth() + 1).padStart(2, '0');
+  const dd = wed.getUTCDate();
   const monthName = MONTHS_ES[Number(mm) - 1] || '';
-  return `Semana del lunes ${Number(dd)} de ${monthName}`;
+  return `Semana del miércoles ${dd} de ${monthName}`;
 }
 
 // Miércoles de la semana de una reunión. Se usa para decidir a qué mes pertenece

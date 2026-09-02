@@ -52,6 +52,18 @@ export function fmtFechaLarga(iso: string): string {
   return `${d} de ${MESES[m - 1]} ${y}`;
 }
 
+/**
+ * A partir de la fecha lunes de la semana (como se guarda en la BD), devuelve
+ * la fecha del día real de la reunión entre semana.
+ * offset = 2 → miércoles (predeterminado JW).
+ */
+export function meetingDateFromMonday(mondayISO: string, offset = 2): string {
+  const d = new Date(mondayISO + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return mondayISO;
+  d.setUTCDate(d.getUTCDate() + offset);
+  return d.toISOString().slice(0, 10);
+}
+
 type PartTitleShape = Pick<SlipPart, 'part_type' | 'student_part_type' | 'title'> & { study_point?: string };
 
 /**
@@ -99,16 +111,22 @@ export function salaCsv(sala: Sala): string {
  * número de parte (Lectura de la Biblia = 3 → partes 4,5,6,7). Es exactamente
  * el mismo filtro que usa el S-89 multi-up existente.
  */
-export function buildSlips(meeting: SlipMeeting): SlipData[] {
+/**
+ * midweekDayOffset: días desde el lunes al día real de la reunión entre semana.
+ *   2 = miércoles (predeterminado). Pasar 0 para usar la fecha de la BD sin ajuste.
+ */
+export function buildSlips(meeting: SlipMeeting, midweekDayOffset = 2): SlipData[] {
   const parts = (meeting.parts ?? [])
     .filter(p => p.role === 'student' && p.assigned_user_id)
     .sort((a, b) => a.part_number - b.part_number);
 
+  const meetingDayISO = meetingDateFromMonday(meeting.date, midweekDayOffset);
+
   return parts.map(p => ({
     nombre:         p.users?.name ?? '',
     ayudante:       p.assistant?.name ?? '',
-    fechaLarga:     fmtFechaLarga(meeting.date),
-    fechaIso:       meeting.date,
+    fechaLarga:     fmtFechaLarga(meetingDayISO),
+    fechaIso:       meetingDayISO,
     numIntervencion: p.part_number,
     tituloCorto:    s89Title(p),
     material:       s89Material(p),

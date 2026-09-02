@@ -23,7 +23,10 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 function formatDate(iso: string): string {
-  const d = new Date(iso + 'T00:00:00');
+  // Las reuniones se guardan con fecha de lunes; la reunión entre semana es el miércoles (lunes+2).
+  const base = new Date(iso + 'T00:00:00Z');
+  const isMonday = base.getUTCDay() === 1;
+  const d = isMonday ? new Date(base.getTime() + 2 * 86400000) : base;
   return d.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 

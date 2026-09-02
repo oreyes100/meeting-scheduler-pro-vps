@@ -258,6 +258,10 @@ export function getDb(): Database.Database {
     `ALTER TABLE cuentas_config ADD COLUMN maintenance_code text NOT NULL DEFAULT 'GM'`,
     `ALTER TABLE cuentas_config ADD COLUMN maintenance_amount real NOT NULL DEFAULT 0`,
     `ALTER TABLE cuentas_config ADD COLUMN ai_api_key text`,
+    // Outgoing talks: nuevos campos para el módulo de discursantes salientes
+    `ALTER TABLE outgoing_talks ADD COLUMN talk_title text`,
+    `ALTER TABLE outgoing_talks ADD COLUMN contact_info text`,
+    `ALTER TABLE outgoing_talks ADD COLUMN kingdom_hall_address text`,
   ];
   for (const sql of runMigrations) {
     try { _db.exec(sql); } catch { /* column already exists */ }

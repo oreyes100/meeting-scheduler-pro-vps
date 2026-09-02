@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS congregation_settings (
   time_zone              text,
   weekend_meeting_day    text DEFAULT 'sunday',
   weekend_meeting_time   text DEFAULT '10:00',
-  midweek_meeting_day    text DEFAULT 'thursday',
+  midweek_meeting_day    text DEFAULT 'wednesday',
   midweek_meeting_time   text DEFAULT '19:30',
   zoom_meeting_id        text,
   zoom_password          text,
@@ -371,14 +371,17 @@ CREATE TABLE IF NOT EXISTS pw_assignments (
 
 -- ─── 19. OUTGOING TALKS (→ users, congregations) ─────────────────────────────
 CREATE TABLE IF NOT EXISTS outgoing_talks (
-  id                 text PRIMARY KEY,
-  week_date          text NOT NULL,
-  user_id            text REFERENCES users(id) ON DELETE CASCADE,
-  congregation_name  text,
-  talk_number        integer,
-  notes              text,
-  created_at         text DEFAULT (datetime('now')),
-  congregation_id    text REFERENCES congregations(id)
+  id                     text PRIMARY KEY,
+  week_date              text NOT NULL,
+  user_id                text REFERENCES users(id) ON DELETE CASCADE,
+  congregation_name      text,
+  talk_number            integer,
+  talk_title             text,
+  contact_info           text,
+  kingdom_hall_address   text,
+  notes                  text,
+  created_at             text DEFAULT (datetime('now')),
+  congregation_id        text REFERENCES congregations(id)
 );
 
 -- ─── 20. CONGREGATION TASKS (→ congregations) ────────────────────────────────
