@@ -1,7 +1,15 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Printer, FileText, Calendar, UserCheck, LayoutGrid } from 'lucide-react';
+import { X, Printer, FileText, Calendar, UserCheck, LayoutGrid, FileSpreadsheet, File } from 'lucide-react';
+import { buildSlips } from '@/lib/s89Individual';
+import {
+  downloadS89IndividualPdf, downloadS89IndividualDocx, downloadS89Xlsx, downloadS89Csv,
+  PDF_OFFSETS_DEFAULT,
+} from '@/lib/exportS89';
+import type { PdfOffsets } from '@/lib/exportS89';
+import { exportXlsx } from '@/lib/exportReport';
+import { exportProgramPdf, exportProgramDocx, exportProgramXlsx, type ProgramWeek } from '@/lib/exportProgram';
 
 const CONGREGATION_NAME = 'La Estación';
 
@@ -45,7 +53,7 @@ interface PrintModalProps {
   auxiliaryRooms?: number;
 }
 
-type ReportType = 's140' | 'combined' | 's89' | 'chairman';
+type ReportType = 's140' | 'combined' | 's89' | 's89ind' | 'chairman' | 'publishers';
 
 // Lunes (ISO) de la semana de una fecha — para emparejar entre semana ↔ fin de semana.
 function mondayOf(iso: string): string {
@@ -104,6 +112,91 @@ function getMonthES(yearMonthStr: string): string {
   const [year, month] = yearMonthStr.split('-');
   const d = new Date(Number(year), Number(month) - 1, 1);
   return d.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+}
+
+// De-duplica reuniones que caen en la misma semana (puede haber una reunión
+// "stub" con fecha errónea —p. ej. un martes— y la reunión real fechada el
+// lunes, ambas para la misma semana). Agrupamos por lunes de la semana +
+// congregación y nos quedamos con la que tiene más asignaciones, para que el
+// reporte mensual nunca muestre una semana vacía ni una semana duplicada.
+function dedupeMeetingsByDate(ms: any[]): any[] {
+  const byWeek: Record<string, any[]> = {};
+  for (const m of ms) {
+    const key = `${mondayOf(m.date)}|${m.congregation_id ?? ''}`;
+    (byWeek[key] ||= []).push(m);
+  }
+  return Object.values(byWeek).map(group =>
+    group.slice().sort((a, b) => {
+      const score = (m: any) =>
+        (m.parts || []).filter((p: any) => p.assigned_user_id).length +
+        (m.chairman_id ? 1 : 0);
+      return score(b) - score(a);
+    })[0]
+  );
+}
+
+const MONTHS_ES = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+
+// Etiqueta de la semana: "Semana del lunes 31 de agosto" (día y mes de la
+// semana de la reunión), en lugar de la fecha suelta de la reunión.
+function weekRangeLabel(iso: string): string {
+  const mon = mondayOf(iso);
+  const [, mm, dd] = mon.split('-');
+  const monthName = MONTHS_ES[Number(mm) - 1] || '';
+  return `Semana del lunes ${Number(dd)} de ${monthName}`;
+}
+
+// Miércoles de la semana de una reunión. Se usa para decidir a qué mes pertenece
+// el programa: una reunión cuyo miércoles cae en el mes seleccionado se incluye,
+// así la semana que empieza el lunes 31/ago (miércoles 2/sep) entra en el reporte
+// de septiembre aunque la fecha de la reunión sea de agosto.
+function wednesdayOf(iso: string): string {
+  const mon = mondayOf(iso);
+  const d = new Date(mon + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 2);
+  return d.toISOString().slice(0, 10);
+}
+
+function meetingInMonth(iso: string, yearMonth: string): boolean {
+  return wednesdayOf(iso).startsWith(yearMonth);
+}
+
+// Mapa detallado de asignaciones por publicador para el reporte de publicadores.
+// Por cada (publicador, semana) guardamos los números de asignación dados y si
+// alguna fue en sala auxiliar.
+interface PubCell { nums: number[]; aux: boolean; }
+function publisherAssignmentDetail(meetings: any[]): {
+  detail: Record<string, Record<string, PubCell>>;
+  weeks: string[];
+} {
+  const detail: Record<string, Record<string, PubCell>> = {};
+  const weeksSet = new Set<string>();
+  const add = (uid: string | null | undefined, date: string, num: number | null, aux: boolean) => {
+    if (!uid || !date) return;
+    const byWeek = (detail[uid] ||= {});
+    const cell = (byWeek[date] ||= { nums: [], aux: false });
+    if (num != null) cell.nums.push(num);
+    if (aux) cell.aux = true;
+    weeksSet.add(date);
+  };
+  for (const m of meetings) {
+    const d = m.date;
+    // Roles sin número de asignación: se marcan con palomita.
+    add(m.chairman_id, d, null, false);
+    add(m.opening_prayer_id, d, null, false);
+    add(m.closing_prayer_id, d, null, false);
+    add(m.cbs_conductor_id, d, null, false);
+    add(m.cbs_reader_id, d, null, false);
+    for (const p of (m.parts || []) as Part[]) {
+      const aux = p.class_type === 'aux_1' || p.class_type === 'aux_2';
+      add(p.assigned_user_id, d, p.part_number, aux);
+      add(p.assistant_user_id, d, p.part_number, aux);
+    }
+  }
+  return { detail, weeks: Array.from(weeksSet).sort() };
 }
 
 function extractScripture(title: string): string {
@@ -189,6 +282,50 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
     return () => { cancelled = true; };
   }, [isOpen]);
 
+  // S-89 individual (85 mm): estado de generación + ajustes de posición PDF.
+  const [s89Busy, setS89Busy] = useState(false);
+  const [pdfOffsets, setPdfOffsets] = useState<PdfOffsets>({ ...PDF_OFFSETS_DEFAULT });
+  const [showPdfAdjust, setShowPdfAdjust] = useState(false);
+
+  // Reunión elegida para las Hojas S-89 individuales (85 mm). Por defecto la semana
+  // seleccionada en la vista principal (p.ej. septiembre); si no hay selección,
+  // la más reciente. El usuario la cambia con el selector de semana.
+  const [s89WeekId, setS89WeekId] = useState<string | null>(null);
+  const s89Meeting =
+    allMeetings.find(m => m.id === s89WeekId) ??
+    selectedMeeting ??
+    allMeetings.slice().sort((a, b) => b.date.localeCompare(a.date))[0] ??
+    null;
+
+  const adjustOffset = (field: keyof PdfOffsets, delta: number) =>
+    setPdfOffsets(prev => ({ ...prev, [field]: Math.round((prev[field] + delta) * 10) / 10 }));
+
+  // Precargar los módulos de export al abrir para no perder el user-gesture window.
+  useEffect(() => {
+    if (!isOpen) return;
+    import('jspdf').catch(() => {});
+    import('docx').catch(() => {});
+    import('xlsx-js-style').catch(() => {});
+  }, [isOpen]);
+
+  const runS89Export = async (kind: 'pdf' | 'docx' | 'xlsx' | 'csv') => {
+    if (!s89Meeting) return;
+    const slips = buildSlips(s89Meeting);
+    if (slips.length === 0) return;
+    const base = `Hojas_S-89_${s89Meeting.date}`;
+    setS89Busy(true);
+    try {
+      if (kind === 'pdf')       await downloadS89IndividualPdf(slips, base, pdfOffsets);
+      else if (kind === 'docx') await downloadS89IndividualDocx(slips, base, pdfOffsets);
+      else if (kind === 'xlsx') await downloadS89Xlsx(slips, base);
+      else                      downloadS89Csv(slips, base);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al exportar');
+    } finally {
+      setS89Busy(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const weekendByMonday: Record<string, any> = {};
@@ -196,9 +333,151 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
     if (w?.date) weekendByMonday[mondayOf(w.date)] = w;
   }
 
-  const monthlyMeetings = allMeetings.filter(m => m.date.startsWith(selectedMonth));
+  const monthlyMeetings = dedupeMeetingsByDate(allMeetings.filter(m => meetingInMonth(m.date, selectedMonth)));
   const availableMonths = Array.from(new Set(allMeetings.map(m => m.date.substring(0, 7)))).sort() as string[];
   const printedOn = fmtJW(new Date().toISOString().slice(0, 10));
+
+  // Reporte de publicadores: una columna por semana (histórico completo, no solo
+  // el mes seleccionado); la celda muestra el número de asignación dado (y "A" si
+  // fue en sala auxiliar). Segmentado por ancianos / siervos ministeriales / publicadores.
+  const pubMeetings = allMeetings;
+  const { detail: pubDetail, weeks: publisherWeeks } = publisherAssignmentDetail(pubMeetings);
+
+  const pubCell = (uid: string, w: string): string => {
+    const c = pubDetail[uid]?.[w];
+    if (!c) return '';
+    if (c.nums.length === 0) return '✓';
+    const txt = c.nums.join(',');
+    return c.aux ? `${txt} A` : txt;
+  };
+
+  const classifyPublisher = (p: any): 'anciano' | 'siervo' | 'publicador' => {
+    if (p.is_elder) return 'anciano';
+    if (p.is_ministerial_servant) return 'siervo';
+    return 'publicador';
+  };
+
+  const pubWeekCols = ['Publicador', 'Última asignación', ...publisherWeeks.map(w => fmtJW(w))];
+
+  const buildPubRows = (group: 'anciano' | 'siervo' | 'publicador') =>
+    publishers
+      .filter((p: any) => classifyPublisher(p) === group)
+      .map((p: any) => {
+        const byWeek = pubDetail[p.id] || {};
+        const weeksAssigned = Object.keys(byWeek).sort();
+        const last = weeksAssigned.length ? weeksAssigned.slice(-1)[0] : '';
+        return [
+          p.name || `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+          last ? fmtJW(last) : '',
+          ...publisherWeeks.map(w => pubCell(p.id, w)),
+        ];
+      });
+
+  const pubGroups = [
+    { key: 'anciano' as const, label: 'Ancianos' },
+    { key: 'siervo' as const, label: 'Siervos ministeriales' },
+    { key: 'publicador' as const, label: 'Publicadores' },
+  ];
+
+  const pubSheets = pubGroups.map(g => ({
+    name: g.label,
+    columns: pubWeekCols,
+    rows: buildPubRows(g.key),
+  }));
+
+  const exportPublishers = async () => {
+    try {
+      await exportXlsx({
+        title: 'Reporte de publicadores',
+        congName: CONGREGATION_NAME,
+        columns: [],
+        rows: [],
+        sheets: pubSheets,
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al exportar');
+    }
+  };
+
+  // Programa mensual (S-140 / combinado) con el MISMO formato que la impresión.
+  const buildProgramWeeks = (type: 's140' | 'combined'): ProgramWeek[] =>
+    monthlyMeetings.map(m => {
+      if (m.assembly_type) {
+        return {
+          weekLabel: weekRangeLabel(m.date),
+          isAssembly: true,
+          assemblyLabel: m.assembly_type === 'regional' ? 'ASAMBLEA REGIONAL' : 'ASAMBLEA DE CIRCUITO',
+        };
+      }
+      const allParts = (m.parts || []) as Part[];
+      const gems = allParts.find(p => p.part_type === 'spiritual_gems');
+      const scripture = gems ? extractScripture(gems.title) : '';
+      const mainParts = allParts.filter(p => p.part_type !== 'cbs').sort((a, b) => a.part_number - b.part_number);
+      const cbsPart = allParts.find(p => p.part_type === 'cbs');
+      const bibleIdx = mainParts.findIndex(p => p.part_type === 'bible_reading');
+      const firstStudentIdx = mainParts.findIndex(p => p.part_type === 'student_part');
+      const firstLivingIdx = mainParts.findIndex(p => p.part_type === 'living_part');
+
+      const chairmanName = m.chairman?.name || getName(m.chairman_id, publishers);
+      const openingName = m.opening_prayer?.name || getName(m.opening_prayer_id, publishers) || chairmanName;
+      const closingName = m.closing_prayer?.name || getName(m.closing_prayer_id, publishers);
+      const cbsConductor = m.cbs_conducer?.name || getName(m.cbs_conductor_id, publishers);
+      const cbsReader = m.cbs_reader?.name || getName(m.cbs_reader_id, publishers);
+      const cbsName = cbsConductor && cbsReader ? `${cbsConductor}/${cbsReader}` : (cbsConductor || cbsReader || '');
+
+      const parts: ProgramWeek['parts'] = mainParts.map((p, idx) => ({
+        num: p.part_number,
+        title: programTitle(p),
+        dur: p.duration_minutes ?? '',
+        name: rowName(p),
+        sep: idx === firstStudentIdx ? 'amber' : idx === firstLivingIdx ? 'maroon' : null,
+        bible: idx === bibleIdx,
+      }));
+
+      const wk = weekendByMonday[mondayOf(m.date)];
+      const week: ProgramWeek = {
+        weekLabel: weekRangeLabel(m.date),
+        scripture,
+        chairman: chairmanName,
+        opening: openingName,
+        closing: closingName,
+        parts,
+        cbs: cbsName,
+        cbsNum: cbsPart?.part_number ?? null,
+        cbsDur: cbsPart?.duration_minutes ?? '',
+        cleaning: m.cleaning_group ?? '___',
+        hospitality: wkHospitality(wk) || '___',
+      };
+      if (type === 'combined' && wk) {
+        week.weekend = {
+          date: wk.date,
+          chairman: wkName(wk?.chairman),
+          talk: wkTalk(wk),
+          speaker: wkSpeaker(wk),
+          congregation: wkCongregation(wk),
+          conductor: wkName(wk?.wt_conductor),
+          reader: wkName(wk?.wt_reader),
+          cleaning: wk?.cleaning_group ?? '___',
+          hospitality: wkHospitality(wk),
+        };
+      }
+      return week;
+    });
+
+  const exportProgram = async (kind: 'pdf' | 'docx' | 'xlsx') => {
+    const combined = reportType === 'combined';
+    const weeks = buildProgramWeeks(combined ? 'combined' : 's140');
+    const title = combined ? 'Programa combinado' : 'Programa S-140';
+    const subtitle = getMonthES(selectedMonth);
+    const opts = { title, congName: CONGREGATION_NAME, subtitle, printedOn, combined };
+    try {
+      if (kind === 'pdf') await exportProgramPdf(weeks, opts);
+      else if (kind === 'docx') await exportProgramDocx(weeks, opts);
+      else await exportProgramXlsx(weeks, opts);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al exportar');
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 print:p-0 print:bg-white print:relative print:inset-auto">
@@ -238,8 +517,10 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                     { key: 's140', label: 'Programa mensual', icon: <Calendar className="w-4 h-4" /> },
                     { key: 'combined', label: 'Programa combinado', icon: <LayoutGrid className="w-4 h-4" /> },
                     { key: 's89',  label: 'Hojas de asignación (S-89)', icon: <FileText className="w-4 h-4" /> },
+                    { key: 's89ind', label: 'Hojas S-89 individuales (85 mm)', icon: <File className="w-4 h-4" /> },
                     { key: 'chairman', label: 'Hoja del presidente', icon: <UserCheck className="w-4 h-4" /> },
-                  ] as const).map(({ key, label, icon }) => (
+                    { key: 'publishers', label: 'Reporte de publicadores', icon: <FileSpreadsheet className="w-4 h-4" /> },
+                   ] as const).map(({ key, label, icon }) => (
                     <button
                       key={key}
                       onClick={() => setReportType(key)}
@@ -263,6 +544,26 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                   >
                     {availableMonths.map(m => <option key={m} value={m}>{getMonthES(m)}</option>)}
                   </select>
+                </div>
+              )}
+
+              {(reportType === 's140' || reportType === 'combined') && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Descargar programa</label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => exportProgram('pdf')}
+                      className="px-3 py-2 rounded-lg bg-rose-600 text-white text-sm font-semibold hover:bg-rose-700"
+                    >PDF</button>
+                    <button
+                      onClick={() => exportProgram('docx')}
+                      className="px-3 py-2 rounded-lg bg-sky-700 text-white text-sm font-semibold hover:bg-sky-800"
+                    >DOCX</button>
+                    <button
+                      onClick={() => exportProgram('xlsx')}
+                      className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700"
+                    >XLSX</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -297,7 +598,7 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                       return (
                         <div key={m.id} className="week-block mb-5">
                           <div className="flex items-center text-white text-sm py-2 px-3" style={{ background: TEAL }}>
-                            <span className="font-bold">{fmtJW(m.date)}</span>
+                            <span className="font-bold">{weekRangeLabel(m.date)}</span>
                             <span className="mx-3">—</span>
                             <span className="font-bold">{m.assembly_type === 'regional' ? 'ASAMBLEA REGIONAL' : 'ASAMBLEA DE CIRCUITO'}</span>
                           </div>
@@ -328,16 +629,16 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                       <div key={m.id} className={`week-block mb-5 ${!isLast ? 'page-break' : ''}`}>
                         {/* Cabecera teal */}
                         <div className="flex items-stretch text-white text-sm" style={{ background: TEAL }}>
-                          <div className="font-bold px-2 py-1 flex-1">
-                            {fmtJW(m.date)}{scripture ? ` | ${scripture}` : ''}
+                          <div className="font-bold px-2.5 py-1.5 flex-1 text-white">
+                            {weekRangeLabel(m.date)}{scripture ? ` | ${scripture}` : ''}
                           </div>
-                          <div className="px-3 py-1 flex items-center gap-1.5 border-l border-white/30">
-                            <span className="text-[11px] font-semibold uppercase opacity-80">Presidente</span>
-                            <span className="font-medium">{chairmanName || '—'}</span>
+                          <div className="px-3 py-1.5 flex items-center gap-1.5 border-l border-white/40">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-yellow-200">Presidente:</span>
+                            <span className="font-semibold text-white">{chairmanName || '—'}</span>
                           </div>
-                          <div className="px-3 py-1 flex items-center gap-1.5 border-l border-white/30">
-                            <span className="text-[11px] font-semibold uppercase opacity-80">Oración</span>
-                            <span className="font-medium">{openingName || '—'}</span>
+                          <div className="px-3 py-1.5 flex items-center gap-1.5 border-l border-white/40">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-yellow-200">Oración:</span>
+                            <span className="font-semibold text-white">{openingName || '—'}</span>
                           </div>
                         </div>
 
@@ -413,7 +714,7 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                       return (
                         <div key={m.id} className="week-block mb-5">
                           <div className="flex items-center text-white text-sm py-2 px-3" style={{ background: TEAL }}>
-                            <span className="font-bold">{fmtJW(m.date)}</span>
+                            <span className="font-bold">{weekRangeLabel(m.date)}</span>
                             <span className="mx-3">—</span>
                             <span className="font-bold">{m.assembly_type === 'regional' ? 'ASAMBLEA REGIONAL' : 'ASAMBLEA DE CIRCUITO'}</span>
                           </div>
@@ -450,10 +751,10 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                         {/* Columna entre semana */}
                         <div className="flex-1 pr-3">
                           <div className="flex items-stretch text-white text-sm" style={{ background: TEAL }}>
-                            <div className="font-bold px-2 py-1 flex-1">{fmtJW(m.date)}{scripture ? ` | ${scripture}` : ''}</div>
-                            <div className="px-3 py-1 border-l border-white/30 w-2/5">
-                              <span className="text-[11px] font-semibold uppercase opacity-80">Presidente y Oración</span>{' '}
-                              <span className="font-medium">{chairmanName || '—'}</span>
+                            <div className="font-bold px-2.5 py-1.5 flex-1 text-white">{weekRangeLabel(m.date)}{scripture ? ` | ${scripture}` : ''}</div>
+                            <div className="px-3 py-1.5 border-l border-white/40 flex items-center gap-1.5">
+                              <span className="text-[11px] font-bold uppercase tracking-wider text-yellow-200">Pres. / Orac:</span>
+                              <span className="font-semibold text-white">{chairmanName || '—'}</span>
                             </div>
                           </div>
 
@@ -591,6 +892,143 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                 </div>
               )}
 
+              {/* ── Hojas S-89 individuales (85 mm) ─────────────────────────── */}
+              {reportType === 's89ind' && (
+                <div>
+                  {(() => {
+                    const weekOptions = allMeetings.slice().sort((a, b) => b.date.localeCompare(a.date));
+                    const countById: Record<string, number> = {};
+                    for (const m of weekOptions) countById[m.id] = buildSlips(m).length;
+                    if (!s89Meeting) {
+                      return <p className="text-center py-12 text-slate-400">No hay reuniones cargadas.</p>;
+                    }
+                    const slips = buildSlips(s89Meeting);
+                    return (
+                      <>
+                        <div className="mb-4 border-b pb-2">
+                          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Semana</label>
+                          <select
+                            value={s89Meeting.id}
+                            onChange={e => setS89WeekId(e.target.value || null)}
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          >
+                            {weekOptions.map(m => (
+                              <option key={m.id} value={m.id}>
+                                {fmtJW(m.date)}{countById[m.id] ? ` (${countById[m.id]})` : ' (sin partes)'}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-sm text-slate-600 mb-3">
+                            Una hojita por asignación estudiantil (85 × 127 mm), solo con los datos del asignado,
+                            como el modelo impreso. <span className="font-semibold">{slips.length}</span> hojita(s) para esta semana.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <button disabled={s89Busy || slips.length === 0} onClick={() => runS89Export('pdf')}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-rose-600 text-white text-sm font-semibold hover:bg-rose-700 disabled:opacity-40">
+                              <FileText className="w-4 h-4" /> PDF
+                            </button>
+                            <button disabled={s89Busy || slips.length === 0} onClick={() => runS89Export('docx')}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-700 text-white text-sm font-semibold hover:bg-sky-800 disabled:opacity-40">
+                              <File className="w-4 h-4" /> DOCX
+                            </button>
+                            <button disabled={s89Busy || slips.length === 0} onClick={() => runS89Export('xlsx')}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-40">
+                              <FileSpreadsheet className="w-4 h-4" /> XLSX
+                            </button>
+                            <button disabled={s89Busy || slips.length === 0} onClick={() => runS89Export('csv')}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-600 text-white text-sm font-semibold hover:bg-slate-700 disabled:opacity-40">
+                              <FileSpreadsheet className="w-4 h-4" /> CSV
+                            </button>
+                            {s89Busy && <span className="text-sm text-slate-400 self-center">Generando…</span>}
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-2">
+                            CSV: Nombre, Ayudante, Fecha, Núm. de intervención, Sala.
+                          </p>
+                        </div>
+
+                        {/* ── Ajuste de posiciones PDF ──────────────────────── */}
+                        <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
+                          <button
+                            onClick={() => setShowPdfAdjust(v => !v)}
+                            className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                          >
+                            <span>⚙ Ajustar posiciones PDF (mm)</span>
+                            <span className="text-slate-400 text-xs">{showPdfAdjust ? '▲' : '▼'}</span>
+                          </button>
+                          {showPdfAdjust && (
+                            <div className="px-4 pb-3 pt-1 space-y-2 border-t border-slate-200">
+                              {([
+                                { key: 'nombre',     label: 'Nombre' },
+                                { key: 'ayudante',   label: 'Ayudante' },
+                                { key: 'fecha',      label: 'Fecha' },
+                                { key: 'asignacion', label: 'Asignación' },
+                                { key: 'sala',       label: 'Sala' },
+                              ] as { key: keyof PdfOffsets; label: string }[]).map(({ key, label }) => {
+                                const xKey = (key + 'X') as keyof PdfOffsets;
+                                return (
+                                  <div key={key} className="border border-slate-200 rounded-lg p-2">
+                                    <div className="text-sm font-medium text-slate-600 mb-1">{label}</div>
+                                    {(['X', 'Y'] as const).map(axis => {
+                                      const k = axis === 'Y' ? key : xKey;
+                                      const val = pdfOffsets[k] as number;
+                                      return (
+                                        <div key={axis} className="flex items-center gap-2 text-sm">
+                                          <span className="w-5 text-slate-400 shrink-0 font-bold">{axis}</span>
+                                          <button
+                                            onClick={() => adjustOffset(k, -0.5)}
+                                            className="w-7 h-7 rounded bg-slate-200 hover:bg-slate-300 font-bold text-slate-700 flex items-center justify-center"
+                                          >−</button>
+                                          <span className="w-14 text-center font-mono text-slate-800 tabular-nums">
+                                            {val > 0 ? '+' : ''}{val.toFixed(1)}
+                                          </span>
+                                          <button
+                                            onClick={() => adjustOffset(k, +0.5)}
+                                            className="w-7 h-7 rounded bg-slate-200 hover:bg-slate-300 font-bold text-slate-700 flex items-center justify-center"
+                                          >+</button>
+                                          {val !== 0 && (
+                                            <button
+                                              onClick={() => setPdfOffsets(prev => ({ ...prev, [k]: 0 }))}
+                                              className="text-[11px] text-slate-400 hover:text-slate-600 ml-1"
+                                            >reset</button>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })}
+                              <button
+                                onClick={() => setPdfOffsets({ ...PDF_OFFSETS_DEFAULT })}
+                                className="mt-1 text-[11px] text-slate-400 hover:text-slate-600"
+                              >Restablecer todo</button>
+                            </div>
+                          )}
+                        </div>
+
+                        {slips.length === 0 ? (
+                          <p className="text-center py-6 text-slate-400">No hay partes de estudiante asignadas en esta semana.</p>
+                        ) : (
+                          <div className="border border-slate-200 rounded-lg overflow-hidden">
+                            {slips.map((s, i) => (
+                              <div key={i} className="flex items-baseline gap-3 px-3 py-2 text-sm border-b border-slate-100 last:border-b-0">
+                                <span className="font-bold text-slate-800 w-40 shrink-0 truncate">{s.nombre}</span>
+                                <span className="text-slate-600 flex-1">
+                                  {s.numIntervencion} {s.tituloCorto}{s.material ? <span className="text-slate-400"> › {s.material}</span> : null}
+                                </span>
+                                {s.ayudante && <span className="text-slate-400 shrink-0">+ {s.ayudante}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
               {/* ── Hoja del Presidente ─────────────────────────────────────── */}
               {reportType === 'chairman' && (
                 <div>
@@ -655,6 +1093,67 @@ export default function PrintModal({ isOpen, onClose, selectedMeeting, allMeetin
                   ) : (
                     <p className="text-center py-12 text-slate-400">Selecciona una semana para ver la hoja del presidente.</p>
                   )}
+                </div>
+              )}
+
+              {/* ── Reporte de publicadores (XLSX) ──────────────────────────── */}
+              {reportType === 'publishers' && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4 no-print border-b pb-2">
+                    Reporte de publicadores
+                  </p>
+
+                  <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm text-slate-600 mb-3">
+                      Lista de publicadores con la fecha de su última asignación y una columna por
+                      cada semana del <span className="font-semibold">historial completo</span>. En cada celda se muestra el <span className="font-semibold">número de asignación</span> que
+                      dieron; si fue en <span className="font-semibold">sala auxiliar</span> se agrega <span className="font-semibold">A</span>. Los roles sin
+                      número (presidente, oración, CBS) se marcan con <span className="font-semibold">✓</span>. El reporte se
+                      divide en Ancianos, Siervos ministeriales y Publicadores.
+                    </p>
+                    <button
+                      onClick={exportPublishers}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" /> Exportar XLSX
+                    </button>
+                    <p className="text-[11px] text-slate-400 mt-2">
+                      {publishers.length} publicador(es) · {publisherWeeks.length} semana(s) con asignaciones.
+                    </p>
+                  </div>
+
+                  {pubGroups.map(g => {
+                    const rows = buildPubRows(g.key);
+                    return (
+                      <div key={g.key} className="mb-6">
+                        <h4 className="text-sm font-bold text-slate-700 mb-2">{g.label} ({rows.length})</h4>
+                        <div className="border border-slate-200 rounded-lg overflow-hidden max-h-[40vh] overflow-y-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead className="sticky top-0 bg-slate-100">
+                              <tr>
+                                {pubWeekCols.map((c, i) => (
+                                  <th key={i} className="border border-slate-200 px-2 py-1 text-left font-semibold whitespace-nowrap">
+                                    {c}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((r, i) => (
+                                <tr key={i} className={i % 2 ? 'bg-slate-50' : ''}>
+                                  {r.map((cell, j) => (
+                                    <td key={j} className="border border-slate-200 px-2 py-1 whitespace-nowrap">
+                                      {cell || ''}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

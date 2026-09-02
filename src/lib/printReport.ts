@@ -11,6 +11,7 @@ export interface PrintTableOptions {
   subtitle?: string;
   columns: string[];
   rows: (string | number | null | undefined)[][];
+  sheets?: { name: string; columns: string[]; rows: (string | number | null | undefined)[][] }[];
 }
 
 export function printTableReport({ title, congName, subtitle, columns, rows }: PrintTableOptions) {

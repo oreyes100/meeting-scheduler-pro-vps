@@ -32,16 +32,23 @@ function unwrap<T>(mod: T): T {
   return mod;
 }
 
-export async function exportXlsx({ title, subtitle, columns, rows }: PrintTableOptions) {
-  const raw = await import('xlsx');
+export async function exportXlsx({ title, subtitle, columns, rows, sheets }: PrintTableOptions) {
+  const raw = await import('xlsx-js-style');
   const XLSX: any = unwrap(raw);
-  const data = [columns, ...rows.map(r => r.map(cellText))];
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  ws['!cols'] = columns.map((c: string, i: number) => ({
-    wch: Math.min(40, Math.max(c.length, ...rows.map((r: any[]) => cellText(r[i]).length)) + 2),
-  }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, (subtitle || 'Reporte').slice(0, 31));
+  const makeSheet = (name: string, cols: string[], rs: any[][]) => {
+    const data = [cols, ...rs.map(r => r.map(cellText))];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = cols.map((c: string, i: number) => ({
+      wch: Math.min(40, Math.max(c.length, ...rs.map((r: any[]) => cellText(r[i]).length)) + 2),
+    }));
+    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+  };
+  if (sheets && sheets.length) {
+    for (const s of sheets) makeSheet(s.name, s.columns, s.rows);
+  } else {
+    makeSheet((subtitle || 'Reporte').slice(0, 31), columns, rows);
+  }
   XLSX.writeFile(wb, `${fileBase(title, subtitle)}.xlsx`);
 }
 
