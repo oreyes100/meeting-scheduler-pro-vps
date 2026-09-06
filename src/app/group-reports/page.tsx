@@ -74,11 +74,12 @@ export default function GroupReportsPage() {
   const [reports, setReports] = useState<Record<string, Report>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!me?.user_id) { setLoading(false); return; }
     setLoading(true);
-diagnosticLogger('fetchData start', { month, userId: me?.user_id });
+    diagnosticLogger('fetchData start', { month, userId: me?.user_id });
     try {
       const [gRes, uRes, rRes] = await Promise.all([
         fetch('/api/field-service-groups'),
@@ -118,6 +119,7 @@ diagnosticLogger('fetchData start', { month, userId: me?.user_id });
 
   const saveReport = async (r: Report) => {
     setSaving(r.user_id);
+    setSaveError(null);
     setReports(prev => ({ ...prev, [r.user_id]: r }));
     diagnosticLogger('saveReport start', { report: r });
     try {
@@ -129,15 +131,20 @@ diagnosticLogger('fetchData start', { month, userId: me?.user_id });
       if (res.ok) {
         const j = await res.json();
         diagnosticLogger('saveReport success', { report: j.report });
-        setReports(prev => ({ ...prev, [r.user_id]: j.report }));
+        if (j.report) {
+          setReports(prev => ({ ...prev, [r.user_id]: j.report }));
+        }
+        setSaveError(null);
       } else {
         const errText = await res.text();
         console.error('[GroupReports] Save report failed:', res.status, errText);
         diagnosticLogger('saveReport server error', { status: res.status, body: errText });
+        setSaveError('Error al guardar en el servidor. Por favor verifica tu conexión.');
       }
     } catch (err) {
       console.error('[GroupReports] Save report network catch:', err);
       diagnosticLogger('saveReport network catch', { error: String(err) });
+      setSaveError('Fallo de red al intentar guardar.');
     }
     setSaving(null);
   };
@@ -182,7 +189,7 @@ diagnosticLogger('fetchData start', { month, userId: me?.user_id });
   return (
     <div className={`flex h-screen ${bgMain} font-sans`}>
       <IconSidebar />
-      <SyncStatus />
+      <SyncStatus pending={!!saving || !!saveError} onSync={fetchData} />
 
       <div className="flex-1 flex flex-col overflow-hidden pb-[52px] md:pb-0">
         <div className="bg-gradient-to-r from-purple-600 to-purple-800 text-white px-4 py-2 shrink-0 flex items-center justify-between">
@@ -201,6 +208,12 @@ diagnosticLogger('fetchData start', { month, userId: me?.user_id });
         </div>
 
         <div className="flex-1 overflow-auto p-3">
+          {saveError && (
+            <div className="max-w-2xl mx-auto mb-3 p-3 rounded-lg bg-red-100 border border-red-300 text-red-800 dark:bg-red-900/40 dark:border-red-700 dark:text-red-300 text-sm flex items-center justify-between shadow-sm">
+              <span>⚠️ {saveError}</span>
+              <button onClick={() => { setSaveError(null); fetchData(); }} className="underline font-bold text-xs ml-3 hover:text-red-950">Reintentar</button>
+            </div>
+          )}
           {loading ? (
             <p className="text-center text-sm text-gray-500 dark:text-gray-400 mt-8">Cargando…</p>
           ) : !groupName ? (

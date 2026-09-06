@@ -88,7 +88,7 @@ interface QueryState {
   limitN: number | null;
   verb: 'select' | 'insert' | 'update' | 'upsert' | 'delete';
   data: Record<string, unknown> | Record<string, unknown>[] | null;
-  upsertConflict: string | null;
+  upsertConflict: string | string[] | null;
   returnSingle: boolean;
   returnMaybe: boolean;
   doSelect: boolean; // whether .select() was chained after insert/update
@@ -117,7 +117,7 @@ class QueryBuilder {
   select(cols = '*') { this.s.cols = cols; this.s.verb = 'select'; return this; }
   insert(rows: Record<string, unknown> | Record<string, unknown>[]) { this.s.verb = 'insert'; this.s.data = rows; return this; }
   update(patch: Record<string, unknown>) { this.s.verb = 'update'; this.s.data = patch; return this; }
-  upsert(rows: Record<string, unknown> | Record<string, unknown>[], opts?: { onConflict?: string }) {
+  upsert(rows: Record<string, unknown> | Record<string, unknown>[], opts?: { onConflict?: string | string[] }) {
     this.s.verb = 'upsert'; this.s.data = rows;
     this.s.upsertConflict = opts?.onConflict ?? null;
     return this;
@@ -227,17 +227,20 @@ class QueryBuilder {
         for (const row of rows) {
           const ser = serializeRow(row as Record<string, unknown>);
           const cols = Object.keys(ser);
-          const sql = `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`;
-          db.prepare(sql).run(...(cols.map(c => ser[c])));
+          let sql = `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`;
           if (this.s.doSelect || this.s.returnSingle || this.s.returnMaybe) {
-            const id = (row as Record<string, unknown>).id;
-            if (id) {
-              const r = db.prepare(`SELECT * FROM "${table}" WHERE id = ?`).get(id) as Record<string, unknown>;
-              if (r) inserted.push(parseRow(table, r) as Record<string, unknown>);
-            }
+            sql += ` RETURNING *`;
+            const r = db.prepare(sql).get(...(cols.map(c => ser[c]))) as Record<string, unknown> | undefined;
+            if (r) inserted.push(parseRow(table, r) as Record<string, unknown>);
+          } else {
+            db.prepare(sql).run(...(cols.map(c => ser[c])));
           }
         }
-        if (this.s.returnSingle) return { data: inserted[0] ?? null, error: null };
+        if (this.s.returnSingle) {
+          if (!inserted.length) return { data: null, error: { code: 'PGRST116', message: 'No rows found' } };
+          return { data: inserted[0], error: null };
+        }
+        if (this.s.returnMaybe) return { data: inserted[0] ?? null, error: null };
         if (this.s.doSelect) return { data: inserted, error: null };
         return { data: null, error: null };
       }
@@ -246,14 +249,19 @@ class QueryBuilder {
         const patch = serializeRow(this.s.data as Record<string, unknown>);
         const cols = Object.keys(patch);
         if (!cols.length) return { data: null, error: null };
-        const sql = `UPDATE "${table}" SET ${cols.map(c => `"${c}" = ?`).join(',')}${where}`;
-        db.prepare(sql).run(...cols.map(c => patch[c]), ...params);
-        if (this.s.doSelect || this.s.returnSingle) {
-          const rows = db.prepare(`SELECT * FROM "${table}"${where}`).all(...params) as Record<string, unknown>[];
+        let sql = `UPDATE "${table}" SET ${cols.map(c => `"${c}" = ?`).join(',')}${where}`;
+        if (this.s.doSelect || this.s.returnSingle || this.s.returnMaybe) {
+          sql += ` RETURNING *`;
+          const rows = db.prepare(sql).all(...cols.map(c => patch[c]), ...params) as Record<string, unknown>[];
           const parsed = rows.map(r => parseRow(table, r) as Record<string, unknown>);
-          if (this.s.returnSingle) return { data: parsed[0] ?? null, error: null };
+          if (this.s.returnSingle) {
+            if (!parsed.length) return { data: null, error: { code: 'PGRST116', message: 'No rows found' } };
+            return { data: parsed[0], error: null };
+          }
+          if (this.s.returnMaybe) return { data: parsed[0] ?? null, error: null };
           return { data: parsed, error: null };
         }
+        db.prepare(sql).run(...cols.map(c => patch[c]), ...params);
         return { data: null, error: null };
       }
 
@@ -261,24 +269,40 @@ class QueryBuilder {
         const rows = (Array.isArray(this.s.data) ? this.s.data : [this.s.data!])
           .map(r => withId(table, r as Record<string, unknown>));
         const upserted: Record<string, unknown>[] = [];
+        const rawConflict = Array.isArray(this.s.upsertConflict)
+          ? this.s.upsertConflict.join(',')
+          : (this.s.upsertConflict ?? 'id');
+        const conflictCols = rawConflict
+          .split(',')
+          .map(c => c.trim().replace(/^["'`]|["'`]$/g, ''))
+          .filter(Boolean);
+        const conflictSet = new Set([...conflictCols, 'id', 'created_at']);
+        const conflictClause = conflictCols.map(c => `"${c}"`).join(', ');
+
         for (const row of rows) {
           const ser = serializeRow(row as Record<string, unknown>);
           const cols = Object.keys(ser);
-          const conflict = this.s.upsertConflict ?? 'id';
-          const updateCols = cols.filter(c => c !== conflict);
-          const sql = updateCols.length
-            ? `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')}) ON CONFLICT("${conflict}") DO UPDATE SET ${updateCols.map(c => `"${c}" = excluded."${c}"`).join(',')}`
-            : `INSERT OR IGNORE INTO "${table}" (${cols.map(c => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`;
-          db.prepare(sql).run(...cols.map(c => ser[c]));
-          if (this.s.doSelect || this.s.returnSingle) {
-            const id = (row as Record<string, unknown>).id;
-            if (id) {
-              const r = db.prepare(`SELECT * FROM "${table}" WHERE id = ?`).get(id) as Record<string, unknown>;
-              if (r) upserted.push(parseRow(table, r) as Record<string, unknown>);
-            }
+          const updateCols = cols.filter(c => !conflictSet.has(c));
+          let sql = `INSERT INTO "${table}" (${cols.map(c => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`;
+          if (updateCols.length) {
+            sql += ` ON CONFLICT(${conflictClause}) DO UPDATE SET ${updateCols.map(c => `"${c}" = excluded."${c}"`).join(',')}`;
+          } else {
+            sql += ` ON CONFLICT(${conflictClause}) DO NOTHING`;
+          }
+
+          if (this.s.doSelect || this.s.returnSingle || this.s.returnMaybe) {
+            sql += ` RETURNING *`;
+            const r = db.prepare(sql).get(...cols.map(c => ser[c])) as Record<string, unknown> | undefined;
+            if (r) upserted.push(parseRow(table, r) as Record<string, unknown>);
+          } else {
+            db.prepare(sql).run(...cols.map(c => ser[c]));
           }
         }
-        if (this.s.returnSingle) return { data: upserted[0] ?? null, error: null };
+        if (this.s.returnSingle) {
+          if (!upserted.length) return { data: null, error: { code: 'PGRST116', message: 'No rows found' } };
+          return { data: upserted[0], error: null };
+        }
+        if (this.s.returnMaybe) return { data: upserted[0] ?? null, error: null };
         if (this.s.doSelect) return { data: upserted, error: null };
         return { data: null, error: null };
       }
