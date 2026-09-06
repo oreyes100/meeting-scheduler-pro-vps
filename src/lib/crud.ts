@@ -12,10 +12,10 @@ const ALLOWED: Record<string, string[]> = {
   congregation_events: ['type', 'name', 'description', 'link', 'start_date', 'end_date', 'single_day', 'show_start_time', 'show_end_time', 'group_name'],
 };
 
-function pick(table: string, body: any) {
+function pick<T extends Record<string, unknown>>(table: string, body: T) {
   const cols = ALLOWED[table] || [];
-  const out: Record<string, any> = {};
-  for (const c of cols) if (c in body) out[c] = body[c];
+  const out: Record<string, unknown> = {};
+  for (const c of cols) if (c in body) out[c] = (body as Record<string, unknown>)[c];
   return out;
 }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { sb } from '@/lib/crud';
 import { getSessionContext, unauthenticated } from '@/lib/serverContext';
+import { diagnosticLogger } from '@/utils/diagnosticLogger';
 
 
 export async function GET(request: Request) {
@@ -13,6 +14,7 @@ export async function GET(request: Request) {
     const userId = searchParams.get('user_id');
     const from = searchParams.get('from');
     const to = searchParams.get('to');
+    diagnosticLogger('GET /api/field-service-reports', { month, userId, from, to });
 
     let query = supabase.from('field_service_reports').select('*').order('month', { ascending: true });
     if (ctx.congreId) query = query.eq('congregation_id', ctx.congreId);
@@ -36,6 +38,7 @@ export async function POST(request: Request) {
     if (!ctx.userId) return unauthenticated();
     const supabase = sb();
     const body = await request.json();
+    diagnosticLogger('POST /api/field-service-reports', { body });
 
     if (!body.user_id || !body.month) return NextResponse.json({ error: 'user_id and month are required' }, { status: 400 });
 
@@ -58,6 +61,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ report: data });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Failed to save report';
+    console.error('POST /api/field-service-reports error:', error);
+    diagnosticLogger('POST /api/field-service-reports error', { error: msg });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

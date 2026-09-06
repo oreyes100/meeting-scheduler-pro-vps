@@ -1,18 +1,15 @@
-import { createClient } from '@supabase/supabase-js';
+import { sb } from '../lib/crud';
 
 /**
  * Executes the auto-assignment logic for a specific meeting ID.
- * Connects to Supabase using either a custom client or creates a service-role client.
+ * Uses local DB client (sb()) by default so no data goes to external Supabase.
  * 
  * @param {string} meetingId 
  * @param {any} [customClient] 
  * @returns {Promise<{ assignedCount: number, totalCount: number, logs: string[] }>}
  */
 export async function runAutoAssignment(meetingId, customClient = null) {
-  const supabase = customClient || createClient(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-  );
+  const supabase = customClient || sb();
 
   const logs = [];
   logs.push(`🤖 Starting auto-assignment for meeting: ${meetingId}`);

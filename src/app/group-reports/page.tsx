@@ -7,6 +7,7 @@ import { IconSidebar } from '@/components/IconSidebar';
 import { SyncStatus } from '@/components/SyncStatus';
 import { useMe } from '@/lib/useMe';
 import { ExportMenu } from '@/components/ExportMenu';
+import { diagnosticLogger } from '@/utils/diagnosticLogger';
 import type { PrintTableOptions } from '@/lib/printReport';
 
 interface Report {
@@ -77,6 +78,7 @@ export default function GroupReportsPage() {
   const fetchData = useCallback(async () => {
     if (!me?.user_id) { setLoading(false); return; }
     setLoading(true);
+diagnosticLogger('fetchData start', { month, userId: me?.user_id });
     try {
       const [gRes, uRes, rRes] = await Promise.all([
         fetch('/api/field-service-groups'),
@@ -104,7 +106,11 @@ export default function GroupReportsPage() {
       const map: Record<string, Report> = {};
       for (const r of rData.reports || []) map[r.user_id] = r;
       setReports(map);
-    } catch { /* ignore */ }
+      diagnosticLogger('fetchData success', { reportCount: Object.keys(map).length });
+    } catch (err) {
+      console.error('[GroupReports] fetchData failed:', err);
+      diagnosticLogger('fetchData error', { error: String(err) });
+    }
     setLoading(false);
   }, [me?.user_id, month]);
 
@@ -113,6 +119,7 @@ export default function GroupReportsPage() {
   const saveReport = async (r: Report) => {
     setSaving(r.user_id);
     setReports(prev => ({ ...prev, [r.user_id]: r }));
+    diagnosticLogger('saveReport start', { report: r });
     try {
       const res = await fetch('/api/field-service-reports', {
         method: 'POST',
@@ -121,9 +128,17 @@ export default function GroupReportsPage() {
       });
       if (res.ok) {
         const j = await res.json();
+        diagnosticLogger('saveReport success', { report: j.report });
         setReports(prev => ({ ...prev, [r.user_id]: j.report }));
+      } else {
+        const errText = await res.text();
+        console.error('[GroupReports] Save report failed:', res.status, errText);
+        diagnosticLogger('saveReport server error', { status: res.status, body: errText });
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('[GroupReports] Save report network catch:', err);
+      diagnosticLogger('saveReport network catch', { error: String(err) });
+    }
     setSaving(null);
   };
 
